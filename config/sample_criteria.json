@@ -1,0 +1,37 @@
+{
+  "保守型投資者篩選標準": {
+    "pe_ratio_max": 15,
+    "pb_ratio_max": 1.5,
+    "dividend_yield_min": 0.04,
+    "debt_to_equity_max": 1.0,
+    "market_cap_min": 5000000000,
+    "說明": "適合風險承受度較低的投資者，重視穩定股息和低估值"
+  },
+  
+  "積極型投資者篩選標準": {
+    "pe_ratio_max": 25,
+    "pb_ratio_max": 3.0,
+    "dividend_yield_min": 0.02,
+    "debt_to_equity_max": 2.0,
+    "market_cap_min": 1000000000,
+    "說明": "適合願意承擔較高風險以獲得更高回報的投資者"
+  },
+  
+  "價值型投資者篩選標準": {
+    "pe_ratio_max": 12,
+    "pb_ratio_max": 1.0,
+    "dividend_yield_min": 0.03,
+    "debt_to_equity_max": 0.8,
+    "market_cap_min": 2000000000,
+    "說明": "嚴格的價值投資標準，尋找真正被低估的股票"
+  },
+  
+  "成長型投資者篩選標準": {
+    "pe_ratio_max": 30,
+    "pb_ratio_max": 4.0,
+    "dividend_yield_min": 0.01,
+    "debt_to_equity_max": 1.5,
+    "market_cap_min": 500000000,
+    "說明": "重視成長潛力，可接受較高估值的標準"
+  }
+}

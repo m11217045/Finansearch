@@ -1,0 +1,93 @@
+"""
+設定檔 - 包含所有系統設定參數
+"""
+
+# 價值投資篩選標準 (部分項目僅為向後兼容，實際使用排名系統)
+SCREENING_CRITERIA = {
+    'pe_ratio_max': 20,           # 本益比上限 (僅用於界面顯示)
+    'pb_ratio_max': 2,            # 市淨率上限 (僅用於界面顯示)
+    'dividend_yield_min': 0.03,   # 股息殖利率下限 (已停用，保留以避免錯誤)
+    'debt_to_equity_max': 1.5,    # 債務權益比上限 (僅用於界面顯示)
+    'market_cap_min': 1_000_000_000,  # 市值下限 (10億美元)
+}
+
+# API 設定 - 基於 Yahoo Finance 每秒最多 30 次請求的限制
+API_SETTINGS = {
+    'request_delay': 0.05,            # API 請求間隔 (秒) - 50ms，約每秒20次請求 (低於30次限制)
+    'batch_delay': 2.0,               # 批次間隔 (秒) - 每處理一批後的額外等待
+    'max_retries': 3,                 # 最大重試次數
+    'timeout': 30,                    # 請求超時時間 (秒)
+    'max_concurrent_requests': 5,     # 最大並發請求數
+    'backoff_factor': 2,              # 重試時的退避因子
+    'rate_limit_per_second': 30,      # Yahoo Finance 每秒請求限制
+    'safe_rate_per_second': 20,       # 安全的每秒請求數 (留有緩衝)
+    'batch_size': 10,                 # 每批處理的股票數量
+}
+
+# Gemini 設定
+GEMINI_SETTINGS = {
+    'model': 'gemini-2.5-pro',  # 使用較便宜的模型
+    'max_tokens': 2048,
+    'temperature': 0.3,
+    'rate_limit_delay': 3,  # API 請求間隔 (秒)
+    'max_retries': 2,       # 減少重試次數以節省配額
+}
+
+# 新聞和情緒分析設定
+NEWS_SETTINGS = {
+    'max_news_per_stock': 10,     # 每支股票最多獲取新聞數
+    'news_days_back': 7,          # 獲取多少天內的新聞
+    'sentiment_analysis': True,    # 是否進行情緒分析
+    'cache_news': True,           # 是否快取新聞數據
+    'scrape_full_content': True,  # 是否爬取完整新聞內容
+    'content_analysis': True,     # 是否分析新聞內容
+    'max_content_length': 3000,   # 新聞內容最大長度
+    'scraping_delay': 1,          # 爬取間隔（秒）
+    'request_timeout': 10,        # 請求超時時間（秒）
+}
+
+# 綜合分析設定
+ANALYSIS_SETTINGS = {
+    'fundamental_weight': 0.4,    # 基本面權重
+    'technical_weight': 0.3,      # 技術面權重  
+    'news_weight': 0.3,           # 新聞面權重
+    'enable_ai_analysis': True,   # 是否啟用AI分析
+    'max_concurrent_analysis': 3, # 最大並發分析數
+}
+
+# 輸出設定
+OUTPUT_SETTINGS = {
+    'max_stocks_to_analyze': 10,   # 最多分析股票數量
+    'output_directory': 'data/output',
+    'save_format': ['csv', 'json'], # 輸出格式
+}
+
+# 數據來源設定
+DATA_SOURCES = {
+    'sp500_url': 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies',
+    'yahoo_finance_base': 'https://finance.yahoo.com',
+}
+
+# 財務指標設定
+FINANCIAL_METRICS = {
+    'required_metrics': [
+        'marketCap',
+        'trailingPE',
+        'priceToBook',
+        'dividendYield',
+        'debtToEquity',
+        'freeCashflow',
+        'totalRevenue',
+        'grossMargins',
+        'operatingMargins',
+        'returnOnEquity'
+    ],
+    'optional_metrics': [
+        'beta',
+        'bookValue',
+        'earningsGrowth',
+        'revenueGrowth',
+        'currentRatio',
+        'quickRatio'
+    ]
+}
