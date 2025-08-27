@@ -13,7 +13,7 @@ from datetime import datetime
 import logging
 
 # 導入自訂模組
-from src.data_fetcher import SP500DataFetcher
+from src.data_fetcher import SP500DataFetcher, MultiMarketDataFetcher, STOCK_PORTFOLIOS
 from src.screener import ValueScreener
 from src.enhanced_analyzer import EnhancedStockAnalyzer
 from src.utils import setup_logging, load_env_variables, format_currency, format_percentage, format_ratio
@@ -22,7 +22,7 @@ from config.settings import SCREENING_CRITERIA, OUTPUT_SETTINGS
 
 # 設置頁面配置
 st.set_page_config(
-    page_title="S&P 500 價值投資分析系統",
+    page_title="多市場價值投資分析系統",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -71,7 +71,7 @@ st.markdown("""
 def main():
     """主應用程式"""
     # 標題
-    st.markdown('<h1 class="main-header">📈 S&P 500 價值投資分析系統</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📈 多市場價值投資分析系統</h1>', unsafe_allow_html=True)
     
     # 側邊欄 - 系統控制
     setup_sidebar()
@@ -94,6 +94,46 @@ def main():
 
 def setup_sidebar():
     """設置側邊欄"""
+    st.sidebar.markdown("## 📊 投資組合選擇")
+    
+    # 投資組合選擇
+    portfolio_options = {
+        'sp500': f"🇺🇸 {STOCK_PORTFOLIOS['sp500']['name']} - {STOCK_PORTFOLIOS['sp500']['description']}",
+        'faang_plus': f"💻 {STOCK_PORTFOLIOS['faang_plus']['name']} - {STOCK_PORTFOLIOS['faang_plus']['description']}",
+        'taiwan_top50': f"🇹🇼 {STOCK_PORTFOLIOS['taiwan_top50']['name']} - {STOCK_PORTFOLIOS['taiwan_top50']['description']}"
+    }
+    
+    selected_portfolio = st.sidebar.selectbox(
+        "選擇投資組合",
+        options=list(portfolio_options.keys()),
+        format_func=lambda x: portfolio_options[x],
+        index=0,
+        help="選擇要分析的股票組合"
+    )
+    
+    # 將選擇的投資組合存儲到 session state
+    st.session_state['selected_portfolio'] = selected_portfolio
+    
+    # 顯示投資組合詳細信息
+    portfolio_config = STOCK_PORTFOLIOS[selected_portfolio]
+    st.sidebar.markdown(f"**📋 當前組合：** {portfolio_config['name']}")
+    
+    if portfolio_config['source'] == 'predefined':
+        ticker_count = len(portfolio_config['tickers'])
+        st.sidebar.markdown(f"**📊 股票數量：** {ticker_count} 支")
+        
+        # 顯示部分股票代碼作為預覽
+        if selected_portfolio == 'faang_plus':
+            st.sidebar.markdown("**💻 包含股票：**")
+            for ticker in portfolio_config['tickers']:
+                st.sidebar.markdown(f"• {ticker}")
+        elif selected_portfolio == 'taiwan_top50':
+            st.sidebar.markdown("**🏢 包含台灣前50大公司**")
+    else:
+        st.sidebar.markdown("**📊 股票數量：** ~500 支")
+    
+    st.sidebar.markdown("---")
+    
     st.sidebar.markdown("## ⚙️ 系統設置")
     
     # API 設置檢查
@@ -152,9 +192,9 @@ def setup_sidebar():
     max_stocks = st.sidebar.number_input(
         "最多分析股票數量",
         min_value=5,
-        max_value=50,
-        value=OUTPUT_SETTINGS['max_stocks_to_analyze'],
-        help="限制分析的股票數量以節省時間"
+        max_value=600,  # 提高限制以支援完整SP500分析
+        value=min(OUTPUT_SETTINGS['max_stocks_to_analyze'], 500),  # 預設500或配置值中較小者
+        help="分析的股票數量。SP500約有500支成分股"
     )
     
     # 將自訂標準存儲到 session state
@@ -166,20 +206,46 @@ def screening_interface():
     """股票篩選介面"""
     st.markdown('<h2 class="sub-header">🔍 股票篩選</h2>', unsafe_allow_html=True)
     
+    # 顯示當前選擇的投資組合
+    if 'selected_portfolio' in st.session_state:
+        portfolio_config = STOCK_PORTFOLIOS[st.session_state['selected_portfolio']]
+        st.info(f"📊 當前投資組合：{portfolio_config['name']} - {portfolio_config['description']}")
+    
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.markdown("### 分析流程")
         
+        # 獲取當前選擇的投資組合名稱
+        portfolio_name = "股票數據"
+        if 'selected_portfolio' in st.session_state:
+            portfolio_config = STOCK_PORTFOLIOS[st.session_state['selected_portfolio']]
+            portfolio_name = portfolio_config['name']
+        
+        # 顯示當前數據狀態
+        if 'current_portfolio' in st.session_state and 'raw_data' in st.session_state:
+            current_portfolio_config = STOCK_PORTFOLIOS[st.session_state['current_portfolio']]
+            st.info(f"📊 目前已載入: {current_portfolio_config['name']} ({len(st.session_state['raw_data'])} 支股票)")
+        
         # 步驟 1: 獲取數據
-        if st.button("1️⃣ 獲取 S&P 500 數據", use_container_width=True):
-            with st.spinner("正在獲取 S&P 500 成分股數據..."):
-                fetch_sp500_data()
+        col1_1, col1_2 = st.columns([3, 1])
+        with col1_1:
+            if st.button(f"1️⃣ 獲取 {portfolio_name} 數據", use_container_width=True):
+                with st.spinner(f"正在獲取 {portfolio_name} 成分股數據..."):
+                    fetch_portfolio_data()
+        
+        with col1_2:
+            if st.button("🔄", help="重新獲取數據", use_container_width=True):
+                # 清除現有數據以強制重新獲取
+                for key in ['raw_data', 'current_portfolio', 'top_stocks', 'ai_analysis_result']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
         
         # 步驟 2: 價值投資排名
         if st.button("2️⃣ 價值投資排名分析", use_container_width=True):
             if 'raw_data' not in st.session_state:
-                st.error("請先獲取 S&P 500 數據")
+                st.error(f"請先獲取 {portfolio_name} 數據")
             else:
                 with st.spinner("正在進行價值投資排名分析..."):
                     apply_screening()
@@ -220,6 +286,11 @@ def data_analysis_interface():
         st.info("請先在「股票篩選」頁面完成篩選流程")
         return
     
+    # 顯示當前分析的投資組合
+    if 'current_portfolio' in st.session_state:
+        portfolio_config = STOCK_PORTFOLIOS[st.session_state['current_portfolio']]
+        st.info(f"📊 分析對象：{portfolio_config['name']} - {portfolio_config['description']}")
+    
     df = st.session_state['top_stocks']
     
     # 總覽統計
@@ -229,16 +300,30 @@ def data_analysis_interface():
         st.metric("篩選出股票數", len(df))
     
     with col2:
-        avg_pe = df['trailing_pe'].mean() if 'trailing_pe' in df.columns else None
+        avg_pe = df['pe_ratio'].mean() if 'pe_ratio' in df.columns else df['trailing_pe'].mean() if 'trailing_pe' in df.columns else None
         st.metric("平均本益比", f"{avg_pe:.2f}" if pd.notna(avg_pe) else "N/A")
     
     with col3:
-        avg_pb = df['price_to_book'].mean() if 'price_to_book' in df.columns else None
+        avg_pb = df['pb_ratio'].mean() if 'pb_ratio' in df.columns else df['price_to_book'].mean() if 'price_to_book' in df.columns else None
         st.metric("平均市淨率", f"{avg_pb:.2f}" if pd.notna(avg_pb) else "N/A")
     
     with col4:
         avg_score = df['value_score'].mean() if 'value_score' in df.columns else None
         st.metric("平均評分", f"{avg_score:.2f}" if pd.notna(avg_score) else "N/A")
+    
+    # 根據投資組合類型顯示特定統計
+    if 'current_portfolio' in st.session_state:
+        portfolio_type = st.session_state['current_portfolio']
+        
+        if portfolio_type == 'faang_plus':
+            st.markdown("### 💻 科技巨頭分析")
+            st.markdown("專注於美國科技龍頭公司的價值分析，這些公司通常具有強大的護城河和成長潛力。")
+        elif portfolio_type == 'taiwan_top50':
+            st.markdown("### 🇹🇼 台股前50分析")
+            st.markdown("專注於台灣證券交易所市值前50大公司，包含半導體、金融、傳統產業等多元領域。")
+        else:  # sp500
+            st.markdown("### 🇺🇸 S&P 500分析")
+            st.markdown("美國最具代表性的500家大型企業，涵蓋各行各業的領導公司。")
     
     # 視覺化圖表
     create_visualization_charts(df)
@@ -319,44 +404,85 @@ def report_interface():
             )
 
 
-@st.cache_data
-def fetch_sp500_data():
-    """獲取 S&P 500 數據"""
+def fetch_portfolio_data():
+    """獲取選定投資組合的數據"""
     try:
-        fetcher = SP500DataFetcher()
+        # 獲取選定的投資組合類型
+        selected_portfolio = st.session_state.get('selected_portfolio', 'sp500')
+        
+        # 檢查是否已經獲取過相同投資組合的數據
+        if ('raw_data' in st.session_state and 
+            'current_portfolio' in st.session_state and 
+            st.session_state['current_portfolio'] == selected_portfolio):
+            st.info(f"已有 {STOCK_PORTFOLIOS[selected_portfolio]['name']} 的數據，如需重新獲取請重新選擇投資組合")
+            return
+        
+        # 創建多市場數據獲取器
+        fetcher = MultiMarketDataFetcher(selected_portfolio)
+        portfolio_config = STOCK_PORTFOLIOS[selected_portfolio]
         
         # 獲取股票列表
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        status_text.text("正在獲取 S&P 500 成分股列表...")
+        status_text.text(f"正在獲取 {portfolio_config['name']} 成分股列表...")
         progress_bar.progress(20)
         
-        tickers = fetcher.get_sp500_tickers()
+        tickers = fetcher.get_tickers()
         
-        status_text.text("正在獲取股票財務數據...")
+        status_text.text(f"正在獲取 {portfolio_config['name']} 股票財務數據...")
         progress_bar.progress(40)
         
-        # 限制獲取數量以提高速度
-        raw_data = fetcher.batch_fetch_stock_data(tickers, max_stocks=100)
+        # 根據投資組合類型設置最大股票數量
+        max_stocks_limit = st.session_state.get('max_stocks', 50)  # 提高預設值
+        
+        # 對於科技7巨頭，獲取所有股票
+        if selected_portfolio == 'faang_plus':
+            max_stocks_limit = None  # 獲取所有7支股票
+        elif selected_portfolio == 'taiwan_top50':
+            max_stocks_limit = min(max_stocks_limit, 50)  # 限制台股數量  
+        else:  # sp500
+            max_stocks_limit = max_stocks_limit  # 移除SP500的額外限制，使用用戶設定的數量
+        
+        raw_data = fetcher.fetch_financial_data(max_stocks_limit)
         
         progress_bar.progress(100)
         status_text.text("數據獲取完成！")
         
+        # 清除舊的分析結果
+        if 'top_stocks' in st.session_state:
+            del st.session_state['top_stocks']
+        if 'ai_analysis_result' in st.session_state:
+            del st.session_state['ai_analysis_result']
+        
         st.session_state['raw_data'] = raw_data
         st.session_state['tickers'] = tickers
+        st.session_state['current_portfolio'] = selected_portfolio
         
-        st.success(f"成功獲取 {len(raw_data)} 支股票的數據")
+        st.success(f"成功獲取 {portfolio_config['name']} 中 {len(raw_data)} 支股票的數據")
+        
+        # 顯示獲取到的股票預覽
+        if len(raw_data) > 0:
+            st.info(f"包含股票: {', '.join(raw_data['symbol'].head(10).tolist())}" + 
+                   (f" ... 等 {len(raw_data)} 支股票" if len(raw_data) > 10 else ""))
         
     except Exception as e:
         st.error(f"數據獲取失敗: {e}")
+        logging.error(f"投資組合數據獲取錯誤: {e}")
+
+
+def fetch_sp500_data():
+    """獲取 S&P 500 數據 - 向後兼容函數"""
+    # 設置為 SP500 並調用通用函數
+    st.session_state['selected_portfolio'] = 'sp500'
+    fetch_portfolio_data()
 
 
 def apply_screening():
     """應用價值投資排名分析"""
     try:
         raw_data = st.session_state['raw_data']
-        max_stocks = st.session_state.get('max_stocks', 10)
+        max_stocks = st.session_state.get('max_stocks', 50)  # 提高預設值
         
         screener = ValueScreener()
         
@@ -488,6 +614,20 @@ def create_visualization_charts(df):
     """建立視覺化圖表"""
     st.markdown("### 📈 視覺化分析")
     
+    # 檢查可用的列名並映射到標準名稱
+    column_mapping = {
+        'pe_ratio': 'trailing_pe',
+        'pb_ratio': 'price_to_book',
+        'symbol': 'ticker',
+        'name': 'company_name'
+    }
+    
+    # 創建一個標準化的數據框
+    df_viz = df.copy()
+    for old_col, new_col in column_mapping.items():
+        if old_col in df.columns and new_col not in df.columns:
+            df_viz[new_col] = df[old_col]
+    
     # 建立圖表
     tab1, tab2, tab3 = st.tabs(["估值指標分布", "行業分析", "評分分析"])
     
@@ -496,44 +636,118 @@ def create_visualization_charts(df):
         
         with col1:
             # 本益比分布
-            fig_pe = px.histogram(df, x='trailing_pe', title='本益比分布', 
-                                nbins=20, labels={'trailing_pe': '本益比', 'count': '股票數量'})
-            st.plotly_chart(fig_pe, use_container_width=True)
+            pe_col = 'trailing_pe' if 'trailing_pe' in df_viz.columns else 'pe_ratio'
+            if pe_col in df_viz.columns and df_viz[pe_col].notna().any():
+                # 過濾異常值 (PE > 100 的股票)
+                pe_data = df_viz[df_viz[pe_col] <= 100][pe_col].dropna()
+                if len(pe_data) > 0:
+                    fig_pe = px.histogram(pe_data, title='本益比分布', 
+                                        nbins=20, labels={pe_col: '本益比', 'count': '股票數量'})
+                    st.plotly_chart(fig_pe, use_container_width=True)
+                else:
+                    st.info("無可用的本益比數據")
+            else:
+                st.info("本益比數據不可用")
         
         with col2:
             # 市淨率分布
-            fig_pb = px.histogram(df, x='price_to_book', title='市淨率分布',
-                                nbins=20, labels={'price_to_book': '市淨率', 'count': '股票數量'})
-            st.plotly_chart(fig_pb, use_container_width=True)
+            pb_col = 'price_to_book' if 'price_to_book' in df_viz.columns else 'pb_ratio'
+            if pb_col in df_viz.columns and df_viz[pb_col].notna().any():
+                # 過濾異常值 (PB > 10 的股票)
+                pb_data = df_viz[df_viz[pb_col] <= 10][pb_col].dropna()
+                if len(pb_data) > 0:
+                    fig_pb = px.histogram(pb_data, title='市淨率分布',
+                                        nbins=20, labels={pb_col: '市淨率', 'count': '股票數量'})
+                    st.plotly_chart(fig_pb, use_container_width=True)
+                else:
+                    st.info("無可用的市淨率數據")
+            else:
+                st.info("市淨率數據不可用")
     
     with tab2:
-        if 'sector' in df.columns:
+        if 'sector' in df_viz.columns and df_viz['sector'].notna().any():
             # 行業分布
-            sector_counts = df['sector'].value_counts()
-            fig_sector = px.pie(values=sector_counts.values, names=sector_counts.index, 
-                              title='行業分布')
-            st.plotly_chart(fig_sector, use_container_width=True)
-            
-            # 各行業平均評分
-            if 'value_score' in df.columns:
-                sector_scores = df.groupby('sector')['value_score'].mean().sort_values(ascending=False)
-                fig_sector_score = px.bar(x=sector_scores.index, y=sector_scores.values,
-                                        title='各行業平均評分',
-                                        labels={'x': '行業', 'y': '平均評分'})
-                st.plotly_chart(fig_sector_score, use_container_width=True)
+            sector_counts = df_viz['sector'].value_counts()
+            if len(sector_counts) > 0:
+                fig_sector = px.pie(values=sector_counts.values, names=sector_counts.index, 
+                                  title='行業分布')
+                st.plotly_chart(fig_sector, use_container_width=True)
+                
+                # 各行業平均評分
+                if 'value_score' in df_viz.columns and df_viz['value_score'].notna().any():
+                    sector_scores = df_viz.groupby('sector')['value_score'].mean().sort_values(ascending=False)
+                    if len(sector_scores) > 0:
+                        fig_sector_score = px.bar(x=sector_scores.index, y=sector_scores.values,
+                                                title='各行業平均評分',
+                                                labels={'x': '行業', 'y': '平均評分'})
+                        st.plotly_chart(fig_sector_score, use_container_width=True)
+            else:
+                st.info("無行業分類數據")
+        else:
+            st.info("行業數據不可用")
     
     with tab3:
         # 評分散布圖
-        if 'value_score' in df.columns and 'trailing_pe' in df.columns and 'price_to_book' in df.columns:
-            fig_scatter = px.scatter(df, x='trailing_pe', y='price_to_book', 
-                                   size='value_score', color='value_score',
-                                   hover_data=['ticker', 'company_name'],
-                               title='估值指標與評分關係')
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        pe_col = 'trailing_pe' if 'trailing_pe' in df_viz.columns else 'pe_ratio'
+        pb_col = 'price_to_book' if 'price_to_book' in df_viz.columns else 'pb_ratio'
+        
+        if ('value_score' in df_viz.columns and 
+            pe_col in df_viz.columns and 
+            pb_col in df_viz.columns):
+            
+            # 準備散布圖數據 (過濾異常值)
+            scatter_df = df_viz[
+                (df_viz[pe_col] <= 100) & 
+                (df_viz[pb_col] <= 10) & 
+                df_viz[pe_col].notna() & 
+                df_viz[pb_col].notna() & 
+                df_viz['value_score'].notna()
+            ].copy()
+            
+            if len(scatter_df) > 0:
+                # 準備懸停數據
+                hover_cols = []
+                if 'ticker' in scatter_df.columns:
+                    hover_cols.append('ticker')
+                elif 'symbol' in scatter_df.columns:
+                    hover_cols.append('symbol')
+                
+                if 'company_name' in scatter_df.columns:
+                    hover_cols.append('company_name')
+                elif 'name' in scatter_df.columns:
+                    hover_cols.append('name')
+                
+                fig_scatter = px.scatter(scatter_df, x=pe_col, y=pb_col, 
+                                       size='value_score', color='value_score',
+                                       hover_data=hover_cols if hover_cols else None,
+                                       title='估值指標與評分關係',
+                                       labels={pe_col: '本益比', pb_col: '市淨率'})
+                st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.info("無足夠的數據繪製散布圖")
+        else:
+            st.info("評分散布圖數據不足")
 
 
 def display_detailed_table(df):
     """顯示詳細數據表格"""
+    # 建立列名映射
+    column_mapping = {
+        'symbol': 'ticker',
+        'name': 'company_name',
+        'pe_ratio': 'trailing_pe',
+        'pb_ratio': 'price_to_book',
+        'roe': 'return_on_equity'
+    }
+    
+    # 創建顯示用的數據框
+    display_df = df.copy()
+    
+    # 應用列名映射
+    for old_col, new_col in column_mapping.items():
+        if old_col in display_df.columns and new_col not in display_df.columns:
+            display_df[new_col] = display_df[old_col]
+    
     # 選擇要顯示的欄位 (移除股息相關)
     columns_to_show = [
         'value_rank', 'ticker', 'company_name', 'sector', 'market_cap',
@@ -541,18 +755,71 @@ def display_detailed_table(df):
         'profit_margins', 'value_score'
     ]
     
-    available_columns = [col for col in columns_to_show if col in df.columns]
-    display_df = df[available_columns].copy()
+    # 備用列名
+    alternative_columns = {
+        'ticker': 'symbol',
+        'company_name': 'name',
+        'trailing_pe': 'pe_ratio',
+        'price_to_book': 'pb_ratio',
+        'return_on_equity': 'roe'
+    }
+    
+    # 選擇可用的列
+    available_columns = []
+    for col in columns_to_show:
+        if col in display_df.columns:
+            available_columns.append(col)
+        elif col in alternative_columns and alternative_columns[col] in display_df.columns:
+            available_columns.append(alternative_columns[col])
+    
+    if not available_columns:
+        st.warning("無可顯示的數據列")
+        return
+    
+    # 選擇要顯示的數據
+    final_df = display_df[available_columns].copy()
     
     # 格式化顯示
-    if 'market_cap' in display_df.columns:
-        display_df['market_cap'] = display_df['market_cap'].apply(lambda x: format_currency(x) if pd.notna(x) else "N/A")
-    if 'return_on_equity' in display_df.columns:
-        display_df['return_on_equity'] = display_df['return_on_equity'].apply(lambda x: format_percentage(x) if pd.notna(x) else "N/A")
-    if 'profit_margins' in display_df.columns:
-        display_df['profit_margins'] = display_df['profit_margins'].apply(lambda x: format_percentage(x) if pd.notna(x) else "N/A")
+    for col in final_df.columns:
+        if 'market_cap' in col:
+            final_df[col] = final_df[col].apply(lambda x: format_currency(x) if pd.notna(x) else "N/A")
+        elif any(name in col for name in ['return_on_equity', 'roe', 'profit_margin']):
+            final_df[col] = final_df[col].apply(lambda x: format_percentage(x) if pd.notna(x) else "N/A")
+        elif any(name in col for name in ['pe_ratio', 'trailing_pe', 'pb_ratio', 'price_to_book', 'debt_to_equity']):
+            final_df[col] = final_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
     
-    st.dataframe(display_df, use_container_width=True)
+    # 重新命名列以便顯示
+    column_display_names = {
+        'value_rank': '排名',
+        'ticker': '股票代號',
+        'symbol': '股票代號',
+        'company_name': '公司名稱',
+        'name': '公司名稱',
+        'sector': '行業',
+        'market_cap': '市值',
+        'trailing_pe': '本益比',
+        'pe_ratio': '本益比',
+        'price_to_book': '市淨率',
+        'pb_ratio': '市淨率',
+        'debt_to_equity': '負債股權比',
+        'return_on_equity': '股東權益報酬率',
+        'roe': '股東權益報酬率',
+        'profit_margins': '利潤率',
+        'profit_margin': '利潤率',
+        'value_score': '價值評分'
+    }
+    
+    # 應用顯示名稱
+    new_column_names = []
+    for col in final_df.columns:
+        if col in column_display_names:
+            new_column_names.append(column_display_names[col])
+        else:
+            new_column_names.append(col)
+    
+    final_df.columns = new_column_names
+    
+    st.dataframe(final_df, use_container_width=True)
 
 
 def run_ai_analysis():

@@ -57,7 +57,7 @@ ANALYSIS_SETTINGS = {
 
 # 輸出設定
 OUTPUT_SETTINGS = {
-    'max_stocks_to_analyze': 10,   # 最多分析股票數量
+    'max_stocks_to_analyze': 500,   # 最多分析股票數量（提高以支援完整SP500分析）
     'output_directory': 'data/output',
     'save_format': ['csv', 'json'], # 輸出格式
 }

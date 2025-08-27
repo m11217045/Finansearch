@@ -21,7 +21,7 @@ class ValueScreener:
         """
         計算價值投資評分，評分越高表示越被低估
         
-        評分標準（適合複委託投資者）：
+        評分標準：
         1. 低本益比 (P/E Ratio) - 越低越好 (30%權重)
         2. 低市淨率 (P/B Ratio) - 越低越好 (25%權重)  
         3. 低債務權益比 (Debt to Equity) - 越低越好 (20%權重)
@@ -33,13 +33,46 @@ class ValueScreener:
         # 建立評分用的數據副本
         scored_df = df.copy()
         
+        # 列名映射 - 處理不同的列名
+        column_mapping = {
+            'pe_ratio': 'trailing_pe',
+            'pb_ratio': 'price_to_book', 
+            'roe': 'return_on_equity',
+            'symbol': 'ticker',
+            'name': 'company_name'
+        }
+        
+        # 應用列名映射
+        for old_col, new_col in column_mapping.items():
+            if old_col in scored_df.columns and new_col not in scored_df.columns:
+                scored_df[new_col] = scored_df[old_col]
+        
         # 確保必要的數值列存在且為數值型
         required_columns = ['trailing_pe', 'price_to_book', 'debt_to_equity', 'return_on_equity', 'profit_margins']
         
+        # 備用列名
+        alternative_columns = {
+            'trailing_pe': 'pe_ratio',
+            'price_to_book': 'pb_ratio',
+            'return_on_equity': 'roe',
+            'profit_margins': 'profit_margin'
+        }
+        
         for col in required_columns:
             if col not in scored_df.columns:
-                scored_df[col] = np.nan
+                # 嘗試使用備用列名
+                alt_col = alternative_columns.get(col)
+                if alt_col and alt_col in scored_df.columns:
+                    scored_df[col] = scored_df[alt_col]
+                else:
+                    scored_df[col] = np.nan
             scored_df[col] = pd.to_numeric(scored_df[col], errors='coerce')
+        
+        # 確保基本列存在
+        if 'ticker' not in scored_df.columns and 'symbol' in scored_df.columns:
+            scored_df['ticker'] = scored_df['symbol']
+        if 'company_name' not in scored_df.columns and 'name' in scored_df.columns:
+            scored_df['company_name'] = scored_df['name']
         
         # 初始化評分
         scored_df['value_score'] = 0.0
@@ -49,57 +82,108 @@ class ValueScreener:
         scored_df['roe_score'] = 0.0
         scored_df['margin_score'] = 0.0
         
-        # 過濾有效數據（至少要有市值和當前價格）
+        # 過濾有效數據 - 放寬條件，只要有基本市值信息即可
         valid_stocks = scored_df[
-            (scored_df['market_cap'].notna()) & 
-            (scored_df['market_cap'] > 1_000_000_000) &  # 市值至少10億美元
-            (scored_df['current_price'].notna()) &
-            (scored_df['current_price'] > 0)
+            (scored_df['market_cap'].notna()) | 
+            (scored_df['current_price'].notna() & scored_df['current_price'] > 0)
         ].copy()
         
         if len(valid_stocks) == 0:
-            logging.warning("沒有有效的股票數據進行評分")
-            return scored_df
+            logging.warning("沒有有效的股票數據進行評分，將對所有股票給予基礎評分")
+            valid_stocks = scored_df.copy()
+        
+        logging.info(f"對 {len(valid_stocks)} 支股票進行價值評分")
+        
+        # 評分權重 - 總和為100
+        weights = {
+            'pe': 30,
+            'pb': 25, 
+            'debt': 20,
+            'roe': 15,
+            'margin': 10
+        }
         
         # 1. 本益比評分 (權重: 30%)
-        pe_valid = valid_stocks[(valid_stocks['trailing_pe'].notna()) & 
-                               (valid_stocks['trailing_pe'] > 0) & 
-                               (valid_stocks['trailing_pe'] < 100)]  # 排除異常高的P/E
-        if len(pe_valid) > 0:
-            pe_percentile = pe_valid['trailing_pe'].rank(pct=True, ascending=False)  # 越低排名越高
-            valid_stocks.loc[pe_valid.index, 'pe_score'] = pe_percentile * 30
+        pe_col = 'trailing_pe'
+        pe_valid = valid_stocks[
+            (valid_stocks[pe_col].notna()) & 
+            (valid_stocks[pe_col] > 0) & 
+            (valid_stocks[pe_col] < 100)
+        ]
+        
+        if len(pe_valid) > 1:
+            # 使用反向百分位排名 (越低的PE排名越高)
+            pe_percentile = pe_valid[pe_col].rank(pct=True, ascending=False)
+            valid_stocks.loc[pe_valid.index, 'pe_score'] = pe_percentile * weights['pe']
+            logging.info(f"為 {len(pe_valid)} 支股票計算本益比評分")
+        else:
+            # 如果數據不足，給所有股票平均分
+            valid_stocks['pe_score'] = weights['pe'] * 0.5
+            logging.info("本益比數據不足，給予平均評分")
         
         # 2. 市淨率評分 (權重: 25%)
-        pb_valid = valid_stocks[(valid_stocks['price_to_book'].notna()) & 
-                               (valid_stocks['price_to_book'] > 0) & 
-                               (valid_stocks['price_to_book'] < 10)]  # 排除異常高的P/B
-        if len(pb_valid) > 0:
-            pb_percentile = pb_valid['price_to_book'].rank(pct=True, ascending=False)  # 越低排名越高
-            valid_stocks.loc[pb_valid.index, 'pb_score'] = pb_percentile * 25
+        pb_col = 'price_to_book'
+        pb_valid = valid_stocks[
+            (valid_stocks[pb_col].notna()) & 
+            (valid_stocks[pb_col] > 0) & 
+            (valid_stocks[pb_col] < 20)
+        ]
+        
+        if len(pb_valid) > 1:
+            pb_percentile = pb_valid[pb_col].rank(pct=True, ascending=False)
+            valid_stocks.loc[pb_valid.index, 'pb_score'] = pb_percentile * weights['pb']
+            logging.info(f"為 {len(pb_valid)} 支股票計算市淨率評分")
+        else:
+            valid_stocks['pb_score'] = weights['pb'] * 0.5
+            logging.info("市淨率數據不足，給予平均評分")
         
         # 3. 債務權益比評分 (權重: 20%)
-        debt_valid = valid_stocks[(valid_stocks['debt_to_equity'].notna()) & 
-                                 (valid_stocks['debt_to_equity'] >= 0) &
-                                 (valid_stocks['debt_to_equity'] < 5)]  # 排除異常高的債務比
-        if len(debt_valid) > 0:
-            debt_percentile = debt_valid['debt_to_equity'].rank(pct=True, ascending=False)  # 越低排名越高
-            valid_stocks.loc[debt_valid.index, 'debt_score'] = debt_percentile * 20
+        debt_col = 'debt_to_equity'
+        debt_valid = valid_stocks[
+            (valid_stocks[debt_col].notna()) & 
+            (valid_stocks[debt_col] >= 0) &
+            (valid_stocks[debt_col] < 10)
+        ]
+        
+        if len(debt_valid) > 1:
+            debt_percentile = debt_valid[debt_col].rank(pct=True, ascending=False)
+            valid_stocks.loc[debt_valid.index, 'debt_score'] = debt_percentile * weights['debt']
+            logging.info(f"為 {len(debt_valid)} 支股票計算債務權益比評分")
+        else:
+            valid_stocks['debt_score'] = weights['debt'] * 0.5
+            logging.info("債務權益比數據不足，給予平均評分")
         
         # 4. 股東權益報酬率評分 (權重: 15%)
-        roe_valid = valid_stocks[(valid_stocks['return_on_equity'].notna()) & 
-                                (valid_stocks['return_on_equity'] > 0) &
-                                (valid_stocks['return_on_equity'] < 1)]  # ROE通常以小數表示
-        if len(roe_valid) > 0:
-            roe_percentile = roe_valid['return_on_equity'].rank(pct=True, ascending=True)  # 越高排名越高
-            valid_stocks.loc[roe_valid.index, 'roe_score'] = roe_percentile * 15
+        roe_col = 'return_on_equity'
+        roe_valid = valid_stocks[
+            (valid_stocks[roe_col].notna()) & 
+            (valid_stocks[roe_col] > -1) &
+            (valid_stocks[roe_col] < 2)
+        ]
+        
+        if len(roe_valid) > 1:
+            roe_percentile = roe_valid[roe_col].rank(pct=True, ascending=True)  # 越高越好
+            valid_stocks.loc[roe_valid.index, 'roe_score'] = roe_percentile * weights['roe']
+            logging.info(f"為 {len(roe_valid)} 支股票計算ROE評分")
+        else:
+            valid_stocks['roe_score'] = weights['roe'] * 0.5
+            logging.info("ROE數據不足，給予平均評分")
         
         # 5. 利潤率評分 (權重: 10%)
-        margin_valid = valid_stocks[(valid_stocks['profit_margins'].notna()) & 
-                                   (valid_stocks['profit_margins'] > 0) &
-                                   (valid_stocks['profit_margins'] < 1)]
-        if len(margin_valid) > 0:
-            margin_percentile = margin_valid['profit_margins'].rank(pct=True, ascending=True)  # 越高排名越高
-            valid_stocks.loc[margin_valid.index, 'margin_score'] = margin_percentile * 10
+        margin_col = 'profit_margins'
+        margin_valid = valid_stocks[
+            (valid_stocks[margin_col].notna()) & 
+            (valid_stocks[margin_col] > -1) &
+            (valid_stocks[margin_col] < 1)
+        ]
+        
+        if len(margin_valid) > 1:
+            margin_percentile = margin_valid[margin_col].rank(pct=True, ascending=True)  # 越高越好
+            valid_stocks.loc[margin_valid.index, 'margin_score'] = margin_percentile * weights['margin']
+            logging.info(f"為 {len(margin_valid)} 支股票計算利潤率評分")
+        else:
+            valid_stocks['margin_score'] = weights['margin'] * 0.5
+            logging.info("利潤率數據不足，給予平均評分")
         
         # 計算總評分
         valid_stocks['value_score'] = (
@@ -120,7 +204,7 @@ class ValueScreener:
     
     def get_top_undervalued_stocks(self, df: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
         """
-        獲取被低估程度排名前N的股票
+        獲取所有股票的價值投資排名，不設硬性篩選標準
         
         Args:
             df: 包含股票數據的DataFrame
@@ -129,50 +213,94 @@ class ValueScreener:
         Returns:
             按價值評分排序的前N名股票DataFrame
         """
-        logging.info(f"開始篩選被低估程度前 {top_n} 名的股票...")
+        logging.info(f"開始計算所有股票的價值投資評分並排名...")
+        
+        if len(df) == 0:
+            logging.warning("輸入數據為空")
+            return pd.DataFrame()
         
         # 計算價值評分
         scored_df = self.calculate_value_score(df)
         
-        # 過濾有評分的股票
-        valid_stocks = scored_df[
-            (scored_df['value_score'].notna()) & 
-            (scored_df['value_score'] > 0)
-        ].copy()
+        # 對於沒有評分的股票，給予基礎評分以確保都能被排名
+        scored_df['value_score'] = scored_df['value_score'].fillna(0)
         
-        if len(valid_stocks) == 0:
-            logging.warning("沒有可排名的股票")
-            return pd.DataFrame()
+        # 確保基本信息完整性
+        for col in ['ticker', 'symbol']:
+            if col in scored_df.columns:
+                break
+        else:
+            # 如果沒有股票代號，創建一個
+            scored_df['ticker'] = scored_df.index.astype(str)
         
-        # 按價值評分降序排列
-        top_stocks = valid_stocks.nlargest(top_n, 'value_score')
+        for col in ['company_name', 'name']:
+            if col in scored_df.columns:
+                break
+        else:
+            # 如果沒有公司名稱，使用股票代號
+            ticker_col = 'ticker' if 'ticker' in scored_df.columns else 'symbol'
+            scored_df['company_name'] = scored_df[ticker_col]
+        
+        # 按價值評分降序排列（所有股票都參與排名）
+        ranked_stocks = scored_df.sort_values('value_score', ascending=False).copy()
+        
+        # 如果要求的數量超過可用股票數量，返回所有股票
+        actual_n = min(top_n, len(ranked_stocks))
+        top_stocks = ranked_stocks.head(actual_n).copy()
         
         # 添加排名
         top_stocks = top_stocks.reset_index(drop=True)
         top_stocks['value_rank'] = range(1, len(top_stocks) + 1)
         
-        # 選擇要顯示的欄位
-        display_columns = [
-            'value_rank', 'ticker', 'company_name', 'sector', 'industry',
-            'current_price', 'market_cap', 'value_score',
-            'trailing_pe', 'price_to_book', 'debt_to_equity', 'return_on_equity', 'profit_margins',
-            'pe_score', 'pb_score', 'debt_score', 'roe_score', 'margin_score'
+        # 選擇要顯示的欄位 - 使用靈活的列名選擇
+        potential_columns = [
+            ('value_rank', 'value_rank'),
+            ('ticker', 'symbol'), 
+            ('company_name', 'name'),
+            ('sector', 'sector'),
+            ('industry', 'industry'),
+            ('current_price', 'current_price'),
+            ('market_cap', 'market_cap'),
+            ('value_score', 'value_score'),
+            ('trailing_pe', 'pe_ratio'),
+            ('price_to_book', 'pb_ratio'),
+            ('debt_to_equity', 'debt_to_equity'),
+            ('return_on_equity', 'roe'),
+            ('profit_margins', 'profit_margin'),
+            ('pe_score', 'pe_score'),
+            ('pb_score', 'pb_score'),
+            ('debt_score', 'debt_score'),
+            ('roe_score', 'roe_score'),
+            ('margin_score', 'margin_score')
         ]
         
-        # 只保留存在的欄位
-        available_columns = [col for col in display_columns if col in top_stocks.columns]
-        result_df = top_stocks[available_columns].copy()
+        # 選擇實際存在的列
+        available_columns = []
+        for primary_col, alt_col in potential_columns:
+            if primary_col in top_stocks.columns:
+                available_columns.append(primary_col)
+            elif alt_col in top_stocks.columns:
+                available_columns.append(alt_col)
         
-        logging.info(f"成功選出 {len(result_df)} 支被低估的優質股票")
+        if available_columns:
+            result_df = top_stocks[available_columns].copy()
+        else:
+            # 如果沒有找到預期的列，至少返回基本信息
+            basic_columns = [col for col in top_stocks.columns if col in ['value_rank', 'value_score']]
+            result_df = top_stocks[basic_columns + [top_stocks.columns[0]]].copy()
+        
+        logging.info(f"成功排名 {len(ranked_stocks)} 支股票，返回前 {len(result_df)} 名")
         
         # 記錄篩選結果
         self.screening_results = {
             'total_stocks_analyzed': len(df),
-            'valid_stocks_scored': len(valid_stocks),
+            'valid_stocks_scored': len(ranked_stocks),
             'top_stocks_selected': len(result_df),
-            'average_value_score': result_df['value_score'].mean() if len(result_df) > 0 else 0,
+            'average_value_score': result_df['value_score'].mean() if 'value_score' in result_df.columns and len(result_df) > 0 else 0,
             'selection_criteria': 'Value Investment Ranking (價值投資排名)',
-            'ranking_method': 'Multi-factor Value Score (多因子價值評分)'
+            'ranking_method': 'Multi-factor Value Score (多因子價值評分)',
+            'min_score': result_df['value_score'].min() if 'value_score' in result_df.columns and len(result_df) > 0 else 0,
+            'max_score': result_df['value_score'].max() if 'value_score' in result_df.columns and len(result_df) > 0 else 0
         }
         
         return result_df
