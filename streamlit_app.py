@@ -16,6 +16,7 @@ import logging
 from src.data_fetcher import SP500DataFetcher, MultiMarketDataFetcher, STOCK_PORTFOLIOS
 from src.screener import ValueScreener
 from src.enhanced_analyzer import EnhancedStockAnalyzer
+from src.stock_individual_analyzer import StockIndividualAnalyzer
 from src.utils import setup_logging, load_env_variables, format_currency, format_percentage, format_ratio
 from config.settings import SCREENING_CRITERIA, OUTPUT_SETTINGS
 
@@ -77,7 +78,7 @@ def main():
     setup_sidebar()
     
     # 主要內容區域
-    tab1, tab2, tab3, tab4 = st.tabs(["🔍 股票篩選", "📊 數據分析", "🤖 AI 分析", "📋 結果報告"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 股票篩選", "📊 數據分析", "🎯 個股分析", "🤖 AI 分析", "📋 結果報告"])
     
     with tab1:
         screening_interface()
@@ -86,9 +87,12 @@ def main():
         data_analysis_interface()
     
     with tab3:
-        ai_analysis_interface()
+        individual_stock_analysis_interface()
     
     with tab4:
+        ai_analysis_interface()
+    
+    with tab5:
         report_interface()
 
 
@@ -1013,6 +1017,512 @@ def create_download_files():
     }
     
     st.success("下載檔案已準備完成！")
+
+
+def individual_stock_analysis_interface():
+    """個股綜合分析介面"""
+    st.markdown('<h2 class="sub-header">🎯 個股綜合分析</h2>', unsafe_allow_html=True)
+    
+    # 股票輸入
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        stock_symbol = st.text_input(
+            "請輸入股票代碼",
+            placeholder="例如：AAPL, TSLA, MSFT",
+            help="輸入美股股票代碼進行綜合分析"
+        )
+    
+    with col2:
+        analysis_mode = st.selectbox(
+            "分析模式",
+            ["標準分析", "深度分析", "快速分析"],
+            help="選擇分析深度"
+        )
+    
+    if st.button("🔍 開始分析", type="primary"):
+        if not stock_symbol:
+            st.error("請輸入股票代碼")
+            return
+            
+        # 顯示分析進度
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            # 初始化分析器
+            status_text.text("初始化分析系統...")
+            progress_bar.progress(10)
+            
+            individual_analyzer = StockIndividualAnalyzer()
+            screener = ValueScreener()
+            
+            # 執行分析
+            status_text.text("獲取股票數據...")
+            progress_bar.progress(30)
+            
+            # 執行個股綜合分析
+            analysis_result = screener.analyze_individual_stock_comprehensive(
+                stock_symbol.upper()
+            )
+            
+            if not analysis_result:
+                st.error(f"無法獲取 {stock_symbol} 的數據，請檢查股票代碼是否正確")
+                return
+            
+            progress_bar.progress(100)
+            status_text.text("分析完成！")
+            
+            # 顯示分析結果
+            display_individual_analysis_results(analysis_result, stock_symbol.upper())
+            
+        except Exception as e:
+            st.error(f"分析過程中發生錯誤：{str(e)}")
+            st.info("請稍後重試或檢查股票代碼是否正確")
+    
+    # 顯示分析說明
+    with st.expander("📖 分析說明"):
+        st.markdown("""
+        ### 個股綜合分析包含三大維度：
+        
+        **🗞️ 新聞面分析 (權重 50%)**
+        - 收集最新30篇相關新聞
+        - 進行情感分析和關鍵詞提取
+        - 評估市場情緒和投資者關注度
+        
+        **📈 技術面分析 (權重 30%)**
+        - RSI 相對強弱指標
+        - MACD 移動平均收斂發散
+        - 移動平均線趨勢分析
+        - 成交量分析
+        
+        **💰 籌碼面分析 (權重 20%)**
+        - 機構持股比例
+        - 內部人持股情況
+        - 空頭比率分析
+        - 股權集中度評估
+        
+        ### 評分標準：
+        - **90-100分**: 極佳，強烈建議買入
+        - **70-89分**: 良好，建議買入
+        - **50-69分**: 中性，建議持有
+        - **30-49分**: 較差，建議觀望
+        - **0-29分**: 差，建議賣出
+        """)
+
+
+def display_individual_analysis_results(analysis_result, symbol):
+    """顯示個股分析結果"""
+    
+    # 總體評分
+    overall_score = analysis_result.get('overall_score', 0)
+    recommendation = analysis_result.get('recommendation', '無建議')
+    
+    # 評分顏色
+    if overall_score >= 70:
+        score_color = "green"
+    elif overall_score >= 50:
+        score_color = "orange"
+    else:
+        score_color = "red"
+    
+    # 顯示總體評分
+    st.markdown(f"""
+    <div style="text-align: center; padding: 20px; background-color: #f0f2f6; border-radius: 10px; margin: 20px 0;">
+        <h2 style="color: #1f77b4; margin-bottom: 10px;">{symbol} 綜合分析報告</h2>
+        <h1 style="color: {score_color}; font-size: 3em; margin: 10px 0;">{overall_score:.1f}/100</h1>
+        <h3 style="color: #333; margin-top: 10px;">投資建議：{recommendation}</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 分項評分
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        news_score = analysis_result.get('news_score', 0)
+        st.metric(
+            label="🗞️ 新聞面評分 (50%)",
+            value=f"{news_score:.1f}/100",
+            delta=None
+        )
+    
+    with col2:
+        tech_score = analysis_result.get('technical_score', 0)
+        st.metric(
+            label="📈 技術面評分 (25%)",
+            value=f"{tech_score:.1f}/100",
+            delta=None
+        )
+    
+    with col3:
+        chip_score = analysis_result.get('chip_score', 0)
+        st.metric(
+            label="💰 基本面評分 (25%)",
+            value=f"{chip_score:.1f}/100",
+            delta=None
+        )
+        st.metric(
+            label="📈 技術面評分 (30%)",
+            value=f"{tech_score:.1f}/100",
+            delta=None
+        )
+    
+    with col3:
+        chip_score = analysis_result.get('chip_score', 0)
+        st.metric(
+            label="💰 籌碼面評分 (20%)",
+            value=f"{chip_score:.1f}/100",
+            delta=None
+        )
+    
+    # 詳細分析結果
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 總體概覽", "🗞️ 新聞分析", "📈 技術分析", "💰 籌碼分析"])
+    
+    with tab1:
+        display_overview_tab(analysis_result, symbol)
+    
+    with tab2:
+        display_news_analysis_tab(analysis_result)
+    
+    with tab3:
+        display_technical_analysis_tab(analysis_result)
+    
+    with tab4:
+        display_chip_analysis_tab(analysis_result)
+
+
+def display_overview_tab(analysis_result, symbol):
+    """顯示總體概覽標籤"""
+    st.subheader("📊 投資概覽")
+    
+    # 基本資訊
+    if 'basic_info' in analysis_result:
+        basic_info = analysis_result['basic_info']
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**基本資訊**")
+            if 'current_price' in basic_info:
+                st.write(f"當前股價: ${basic_info['current_price']:.2f}")
+            if 'market_cap' in basic_info:
+                market_cap = basic_info['market_cap']
+                if market_cap > 1e9:
+                    st.write(f"市值: ${market_cap/1e9:.1f}B")
+                else:
+                    st.write(f"市值: ${market_cap/1e6:.1f}M")
+            if 'pe_ratio' in basic_info:
+                st.write(f"本益比: {basic_info['pe_ratio']:.2f}")
+        
+        with col2:
+            st.write("**風險指標**")
+            if 'beta' in basic_info:
+                st.write(f"Beta係數: {basic_info['beta']:.2f}")
+            if 'volatility' in basic_info:
+                st.write(f"波動率: {basic_info['volatility']:.2f}%")
+    
+    # 各維度評分雷達圖
+    if all(key in analysis_result for key in ['news_score', 'technical_score', 'chip_score']):
+        create_radar_chart(analysis_result)
+
+
+def display_news_analysis_tab(analysis_result):
+    """顯示新聞分析標籤 - 專注短線投資機會"""
+    st.subheader("🗞️ 短線新聞情感分析 (權重: 50%) - 專注一週内投資機會")
+    
+    # 添加短線投資說明
+    st.info("📈 **短線投資重點**: 本分析專注於一週內的新聞，特別關注24小時內的最新消息對股價的即時影響。")
+    
+    news_analysis = analysis_result.get('news_analysis', {})
+    
+    if news_analysis:
+        # 情感分析總覽
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            sentiment = news_analysis.get('sentiment', 'neutral')
+            sentiment_color = {
+                'positive': '🟢',
+                'negative': '🔴', 
+                'neutral': '🟡'
+            }.get(sentiment, '🟡')
+            st.metric("整體情緒", f"{sentiment_color} {sentiment.title()}")
+        
+        with col2:
+            confidence = news_analysis.get('confidence', 0)
+            st.metric("信心度", f"{confidence}/10")
+        
+        with col3:
+            sentiment_strength = news_analysis.get('sentiment_strength', 0)
+            st.metric("情緒強度", f"{sentiment_strength}/10")
+        
+        with col4:
+            news_count = len(news_analysis.get('news_titles', []))
+            st.metric("分析新聞數", f"{news_count}")
+        
+        # 最新新聞標題概覽
+        if 'news_titles' in news_analysis and news_analysis['news_titles']:
+            st.subheader("📰 最新新聞標題概覽")
+            
+            # 顯示新聞標題的可展開區域
+            with st.expander("📋 查看所有新聞標題", expanded=True):
+                for i, title in enumerate(news_analysis['news_titles'], 1):
+                    st.write(f"**{i}.** {title}")
+        
+        # 如果有原始新聞數據，顯示詳細的中英文對照
+        if 'news_data' in analysis_result and analysis_result['news_data']:
+            st.subheader("📰 詳細新聞標題 (中英對照) - 專注一週內短線機會")
+            
+            with st.expander("🌐 查看中英文新聞標題對照", expanded=False):
+                recent_count = 0
+                for i, news_item in enumerate(analysis_result['news_data'][:5], 1):  # 顯示前5條
+                    # 檢查是否為最近24小時內的新聞
+                    is_recent = news_item.get('is_recent', False)
+                    if is_recent:
+                        recent_count += 1
+                    
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        # 如果是24小時內的新聞，加上特殊標記
+                        title_prefix = "🔥 **[最新]** " if is_recent else ""
+                        
+                        # 顯示中文標題（主要顯示）
+                        chinese_title = news_item.get('title', '')
+                        st.markdown(f"**{i}. {title_prefix}{chinese_title}**")
+                        
+                        # 顯示原文標題（如果有的話）
+                        original_title = news_item.get('original_title', '')
+                        if original_title and original_title != chinese_title:
+                            st.caption(f"🔤 原文: {original_title}")
+                        
+                        # 顯示發布者和時間
+                        publisher = news_item.get('publisher', 'N/A')
+                        publish_time = news_item.get('publish_time', 'N/A')
+                        
+                        # 如果是最新新聞，用不同的顏色顯示時間
+                        if is_recent:
+                            st.caption(f"📅 **{publisher}** • **{publish_time}** ⚡")
+                        else:
+                            st.caption(f"📅 {publisher} • {publish_time}")
+                    
+                    with col2:
+                        # 顯示新聞連結
+                        news_url = news_item.get('url', '')
+                        if news_url:
+                            st.markdown(f"[🔗 閱讀原文]({news_url})")
+                    
+                    st.divider()
+                
+                # 顯示統計資訊
+                if recent_count > 0:
+                    st.info(f"🔥 找到 {recent_count} 條24小時內的最新新聞，適合短線投資分析")
+        
+        # 關鍵主題分析
+        if 'key_themes' in news_analysis and news_analysis['key_themes']:
+            st.subheader("� 關鍵主題分析")
+            
+            # 使用列來顯示關鍵主題
+            themes = news_analysis['key_themes']
+            if len(themes) > 0:
+                theme_cols = st.columns(min(len(themes), 3))  # 最多3列
+                for i, theme in enumerate(themes[:3]):  # 顯示前3個主題
+                    with theme_cols[i % 3]:
+                        st.info(f"🎯 {theme}")
+                
+                # 如果有更多主題，顯示在下面
+                if len(themes) > 3:
+                    for theme in themes[3:]:
+                        st.write(f"• {theme}")
+        
+        # 市場影響評估
+        if 'market_impact' in news_analysis and news_analysis['market_impact']:
+            st.subheader("📊 市場影響評估")
+            
+            market_impact = news_analysis['market_impact']
+            
+            impact_col1, impact_col2, impact_col3 = st.columns(3)
+            
+            with impact_col1:
+                st.markdown("**短期影響 (1-4週)**")
+                st.write(market_impact.get('short_term', 'N/A'))
+            
+            with impact_col2:
+                st.markdown("**中期影響 (1-3個月)**")
+                st.write(market_impact.get('medium_term', 'N/A'))
+            
+            with impact_col3:
+                st.markdown("**長期影響 (6-12個月)**")
+                st.write(market_impact.get('long_term', 'N/A'))
+        
+        # 風險與機會分析
+        risk_opp_col1, risk_opp_col2 = st.columns(2)
+        
+        with risk_opp_col1:
+            if 'risk_factors' in news_analysis and news_analysis['risk_factors']:
+                st.subheader("⚠️ 潛在風險因素")
+                for risk in news_analysis['risk_factors']:
+                    st.write(f"🔸 {risk}")
+        
+        with risk_opp_col2:
+            if 'opportunities' in news_analysis and news_analysis['opportunities']:
+                st.subheader("� 投資機會點")
+                for opportunity in news_analysis['opportunities']:
+                    st.write(f"🔹 {opportunity}")
+        
+        # 投資策略建議
+        if 'investment_strategy' in news_analysis and news_analysis['investment_strategy']:
+            st.subheader("💡 投資策略建議")
+            st.info(news_analysis['investment_strategy'])
+        
+        # 關注要點
+        if 'attention_points' in news_analysis and news_analysis['attention_points']:
+            st.subheader("👀 需要關注的後續發展")
+            attention_points = news_analysis['attention_points']
+            if len(attention_points) <= 2:
+                for point in attention_points:
+                    st.write(f"📌 {point}")
+            else:
+                for point in attention_points:
+                    st.write(f"• {point}")
+        
+        # 完整新聞面情報報告
+        if 'news_intelligence_report' in news_analysis and news_analysis['news_intelligence_report']:
+            with st.expander("📋 完整新聞面情報分析報告", expanded=False):
+                report = news_analysis['news_intelligence_report']
+                st.markdown(report)
+    
+    else:
+        st.info("暫無新聞分析數據")
+        st.write("請先在 AI 分析標籤中執行股票分析以獲取新聞數據。")
+
+
+def display_technical_analysis_tab(analysis_result):
+    """顯示技術分析標籤"""
+    st.subheader("📈 技術指標分析")
+    
+    tech_analysis = analysis_result.get('technical_analysis', {})
+    
+    if tech_analysis:
+        # 技術指標概覽
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            rsi = tech_analysis.get('rsi', 0)
+            st.metric("RSI", f"{rsi:.1f}")
+            if rsi > 70:
+                st.caption("🔴 超買區域")
+            elif rsi < 30:
+                st.caption("🟢 超賣區域")
+            else:
+                st.caption("🟡 正常區域")
+        
+        with col2:
+            macd = tech_analysis.get('macd', 0)
+            st.metric("MACD", f"{macd:.3f}")
+            if macd > 0:
+                st.caption("🟢 多頭訊號")
+            else:
+                st.caption("🔴 空頭訊號")
+        
+        with col3:
+            ma_signal = tech_analysis.get('ma_signal', 'neutral')
+            signal_text = {"bullish": "多頭", "bearish": "空頭", "neutral": "中性"}
+            st.metric("移動平均", signal_text.get(ma_signal, "中性"))
+        
+        # 移動平均線分析
+        if 'moving_averages' in tech_analysis:
+            st.subheader("📊 移動平均線")
+            ma_data = tech_analysis['moving_averages']
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if 'ma_20' in ma_data:
+                    st.write(f"20日均線: ${ma_data['ma_20']:.2f}")
+                if 'ma_50' in ma_data:
+                    st.write(f"50日均線: ${ma_data['ma_50']:.2f}")
+            
+            with col2:
+                if 'ma_200' in ma_data:
+                    st.write(f"200日均線: ${ma_data['ma_200']:.2f}")
+                if 'current_price' in ma_data:
+                    st.write(f"當前價格: ${ma_data['current_price']:.2f}")
+    else:
+        st.info("暫無技術分析數據")
+
+
+def display_chip_analysis_tab(analysis_result):
+    """顯示籌碼分析標籤"""
+    st.subheader("💰 籌碼結構分析")
+    
+    chip_analysis = analysis_result.get('chip_analysis', {})
+    
+    if chip_analysis:
+        # 持股結構
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**機構持股**")
+            institutional = chip_analysis.get('institutional_ownership', 0)
+            st.metric("機構持股比例", f"{institutional:.1f}%")
+            
+            insider = chip_analysis.get('insider_ownership', 0)
+            st.metric("內部人持股", f"{insider:.1f}%")
+        
+        with col2:
+            st.write("**市場指標**")
+            short_ratio = chip_analysis.get('short_ratio', 0)
+            st.metric("空頭比率", f"{short_ratio:.2f}")
+            
+            float_short = chip_analysis.get('percent_held_by_institutions', 0)
+            st.metric("機構持有比例", f"{float_short:.1f}%")
+        
+        # 籌碼評估
+        st.subheader("📋 籌碼評估")
+        ownership_score = chip_analysis.get('ownership_score', 0)
+        
+        if ownership_score >= 80:
+            st.success(f"籌碼結構優良 (評分: {ownership_score:.1f})")
+        elif ownership_score >= 60:
+            st.info(f"籌碼結構一般 (評分: {ownership_score:.1f})")
+        else:
+            st.warning(f"籌碼結構需關注 (評分: {ownership_score:.1f})")
+    else:
+        st.info("暫無籌碼分析數據")
+
+
+def create_radar_chart(analysis_result):
+    """創建評分雷達圖"""
+    import plotly.graph_objects as go
+    
+    categories = ['新聞面', '技術面', '籌碼面']
+    scores = [
+        analysis_result.get('news_score', 0),
+        analysis_result.get('technical_score', 0),
+        analysis_result.get('chip_score', 0)
+    ]
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatterpolar(
+        r=scores,
+        theta=categories,
+        fill='toself',
+        name='評分',
+        line_color='rgb(31, 119, 180)'
+    ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100]
+            )),
+        showlegend=False,
+        title="三維度評分雷達圖",
+        height=400
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 
 if __name__ == "__main__":

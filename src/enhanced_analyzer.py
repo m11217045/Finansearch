@@ -41,17 +41,161 @@ class EnhancedStockAnalyzer:
             logging.error(f"Gemini AI 初始化失敗: {e}")
             self.model = None
 
+    def translate_to_chinese(self, text: str) -> str:
+        """使用 Gemini AI 將英文翻譯成繁體中文"""
+        if not text or not self.model:
+            return text
+            
+        try:
+            # 如果已經包含中文字符，直接返回
+            if any('\u4e00' <= char <= '\u9fff' for char in text):
+                return text
+                
+            prompt = f"""
+            請將以下英文新聞標題翻譯成繁體中文，保持原意和專業性：
+            
+            英文標題：{text}
+            
+            要求：
+            1. 使用繁體中文
+            2. 保持財經術語的準確性
+            3. 語言自然流暢
+            4. 直接返回翻譯結果，不要加任何說明
+            """
+            
+            response = self.model.generate_content(prompt)
+            translated_text = response.text.strip()
+            
+            # 移除可能的引號或多餘文字
+            if translated_text.startswith('"') and translated_text.endswith('"'):
+                translated_text = translated_text[1:-1]
+            if translated_text.startswith('「') and translated_text.endswith('」'):
+                translated_text = translated_text[1:-1]
+                
+            return translated_text
+            
+        except Exception as e:
+            logging.warning(f"翻譯失敗: {e}, 返回原文")
+            return text
+
+    def batch_translate_titles(self, titles: List[str]) -> List[str]:
+        """批量翻譯新聞標題"""
+        if not titles or not self.model:
+            return titles
+            
+        try:
+            # 過濾掉空標題
+            non_empty_titles = [title for title in titles if title and title.strip()]
+            if not non_empty_titles:
+                return titles
+                
+            # 構建批量翻譯請求
+            titles_text = "\n".join([f"{i+1}. {title}" for i, title in enumerate(non_empty_titles)])
+            
+            prompt = f"""
+            請將以下英文新聞標題翻譯成繁體中文，保持原意和專業性：
+            
+            {titles_text}
+            
+            要求：
+            1. 使用繁體中文
+            2. 保持財經術語的準確性
+            3. 語言自然流暢
+            4. 按照相同的編號順序返回翻譯結果
+            5. 每行一個翻譯，格式：1. 翻譯結果
+            """
+            
+            response = self.model.generate_content(prompt)
+            translated_lines = response.text.strip().split('\n')
+            
+            # 解析翻譯結果
+            translated_titles = []
+            for line in translated_lines:
+                line = line.strip()
+                if line and '. ' in line:
+                    # 移除編號
+                    translated_title = line.split('. ', 1)[1] if '. ' in line else line
+                    # 移除可能的引號
+                    if translated_title.startswith('"') and translated_title.endswith('"'):
+                        translated_title = translated_title[1:-1]
+                    if translated_title.startswith('「') and translated_title.endswith('」'):
+                        translated_title = translated_title[1:-1]
+                    translated_titles.append(translated_title)
+            
+            # 確保翻譯結果數量匹配
+            if len(translated_titles) == len(non_empty_titles):
+                # 重新組合，保持原始列表結構（包括空值）
+                result = []
+                translated_index = 0
+                for original_title in titles:
+                    if original_title and original_title.strip():
+                        result.append(translated_titles[translated_index])
+                        translated_index += 1
+                    else:
+                        result.append(original_title)
+                return result
+            else:
+                # 如果批量翻譯失敗，回退到單個翻譯
+                logging.warning("批量翻譯結果數量不匹配，回退到單個翻譯")
+                return [self.translate_to_chinese(title) for title in titles]
+                
+        except Exception as e:
+            logging.warning(f"批量翻譯失敗: {e}, 回退到單個翻譯")
+            return [self.translate_to_chinese(title) for title in titles]
+
     def get_stock_news(self, ticker: str, days: int = 7) -> List[Dict]:
         """獲取股票相關新聞（支持多種來源）"""
         try:
             # 主要來源：yfinance
             news_list = self._get_yahoo_news(ticker)
             
-            # 爬取新聞內容
+            # 爬取新聞內容（加強容錯處理）
             if NEWS_SETTINGS.get('scrape_full_content', True):
-                for news_item in news_list:
-                    content = self._scrape_news_content(news_item['url'])
-                    news_item['content'] = content
+                successful_scrapes = 0
+                failed_scrapes = 0
+                
+                for i, news_item in enumerate(news_list):
+                    try:
+                        logging.info(f"正在爬取第 {i+1}/{len(news_list)} 條新聞內容...")
+                        content = self._scrape_news_content(news_item['url'])
+                        
+                        if content and len(content) > NEWS_SETTINGS.get('min_content_length', 50):  # 確保內容有意義
+                            news_item['content'] = content
+                            successful_scrapes += 1
+                            logging.info(f"✅ 成功爬取新聞內容 ({len(content)} 字元)")
+                        else:
+                            news_item['content'] = news_item.get('summary', '')  # 使用摘要作為備用
+                            failed_scrapes += 1
+                            logging.warning(f"❌ 新聞內容爬取失敗，使用摘要代替")
+                            
+                    except Exception as e:
+                        news_item['content'] = news_item.get('summary', '')
+                        failed_scrapes += 1
+                        logging.warning(f"❌ 爬取新聞內容時發生錯誤: {e}")
+                        continue
+                
+                logging.info(f"新聞內容爬取完成: 成功 {successful_scrapes} 條，失敗 {failed_scrapes} 條")
+            
+            # 翻譯新聞標題
+            if NEWS_SETTINGS.get('translate_titles', True) and news_list:
+                logging.info("正在翻譯新聞標題...")
+                try:
+                    # 提取所有標題
+                    titles = [news.get('title', '') for news in news_list]
+                    
+                    # 批量翻譯
+                    translated_titles = self.batch_translate_titles(titles)
+                    
+                    # 更新新聞項目的標題
+                    for i, news in enumerate(news_list):
+                        if i < len(translated_titles):
+                            news['original_title'] = news.get('title', '')  # 保存原始英文標題
+                            news['title'] = translated_titles[i]  # 使用翻譯後的中文標題
+                    
+                    logging.info(f"成功翻譯 {len(translated_titles)} 個新聞標題")
+                    
+                except Exception as e:
+                    logging.warning(f"翻譯新聞標題失敗: {e}")
             
             self.news_cache[ticker] = news_list
             logging.info(f"成功獲取 {ticker} 的 {len(news_list)} 條新聞")
@@ -62,7 +206,7 @@ class EnhancedStockAnalyzer:
             return []
     
     def _get_yahoo_news(self, ticker: str) -> List[Dict]:
-        """從 Yahoo Finance 獲取新聞"""
+        """從 Yahoo Finance 獲取新聞，專注於一週內的短線投資新聞"""
         try:
             stock = yf.Ticker(ticker)
             news = stock.news
@@ -71,8 +215,16 @@ class EnhancedStockAnalyzer:
                 logging.warning(f"未找到 {ticker} 的新聞")
                 return []
             
+            # 計算時間閾值（使用 UTC 時間避免時區問題）
+            from datetime import timezone
+            now = datetime.now(timezone.utc)
+            one_week_ago = now - timedelta(days=NEWS_SETTINGS.get('news_days_back', 7))
+            priority_hours_ago = now - timedelta(hours=NEWS_SETTINGS.get('priority_recent_hours', 24))
+            
             processed_news = []
-            for item in news[:NEWS_SETTINGS.get('max_news_per_stock', 10)]:
+            priority_news = []  # 24小時內的優先新聞
+            
+            for item in news[:NEWS_SETTINGS.get('max_news_per_stock', 8) * 2]:  # 多獲取一些，然後篩選
                 try:
                     # 處理新版本 yfinance 的數據結構
                     if 'content' in item and isinstance(item['content'], dict):
@@ -82,13 +234,24 @@ class EnhancedStockAnalyzer:
                         
                         # 獲取發布時間
                         pub_date = content_data.get('pubDate', '') or content_data.get('displayTime', '')
+                        publish_timestamp = None
                         if pub_date:
                             try:
                                 if pub_date.endswith('Z'):
-                                    pub_date = pub_date[:-1] + '+00:00'
-                                publish_time = datetime.fromisoformat(pub_date.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S')
-                            except:
+                                    # 處理 Z 結尾的 UTC 時間
+                                    publish_timestamp = datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
+                                else:
+                                    # 嘗試解析 ISO 格式時間
+                                    publish_timestamp = datetime.fromisoformat(pub_date)
+                                    # 如果沒有時區資訊，假設為 UTC
+                                    if publish_timestamp.tzinfo is None:
+                                        publish_timestamp = publish_timestamp.replace(tzinfo=timezone.utc)
+                                
+                                publish_time = publish_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+                            except Exception as e:
+                                logging.warning(f"解析時間失敗 {pub_date}: {e}")
                                 publish_time = pub_date
+                                publish_timestamp = None
                         else:
                             publish_time = ''
                         
@@ -112,90 +275,226 @@ class EnhancedStockAnalyzer:
                         url = item.get('link', '')
                         
                         # 處理時間戳
+                        publish_timestamp = None
                         if 'providerPublishTime' in item:
-                            publish_time = datetime.fromtimestamp(
-                                item['providerPublishTime']
-                            ).strftime('%Y-%m-%d %H:%M:%S')
+                            # Unix 時間戳轉換為 UTC datetime
+                            publish_timestamp = datetime.fromtimestamp(item['providerPublishTime'], tz=timezone.utc)
+                            publish_time = publish_timestamp.strftime('%Y-%m-%d %H:%M:%S')
                         else:
                             publish_time = ''
+                    
+                    # 時間過濾：只保留一週內的新聞
+                    if publish_timestamp:
+                        if publish_timestamp < one_week_ago:
+                            continue  # 跳過超過一週的新聞
+                    
+                    # 檢查新聞相關性（基本過濾）
+                    if not self._is_news_relevant(title, summary, ticker):
+                        continue
                     
                     news_item = {
                         'title': title,
                         'summary': summary,
                         'publisher': publisher,
                         'publish_time': publish_time,
+                        'publish_timestamp': publish_timestamp,
                         'url': url,
                         'source': 'Yahoo Finance',
-                        'content': ''  # 將在後續填充
+                        'content': '',  # 將在後續填充
+                        'is_recent': publish_timestamp and publish_timestamp >= priority_hours_ago if publish_timestamp else False
                     }
                     
                     if title and url:  # 確保有標題和URL
-                        processed_news.append(news_item)
+                        if news_item['is_recent']:
+                            priority_news.append(news_item)
+                        else:
+                            processed_news.append(news_item)
                     
                 except Exception as e:
                     logging.warning(f"處理新聞項目時出錯: {e}")
                     continue
-                    
-            return processed_news
+            
+            # 組合新聞：優先顯示最近24小時的新聞，然後是一週內的其他新聞
+            final_news = priority_news + processed_news
+            
+            # 限制新聞數量
+            max_news = NEWS_SETTINGS.get('max_news_per_stock', 8)
+            final_news = final_news[:max_news]
+            
+            # 按時間排序（最新的在前）
+            final_news.sort(key=lambda x: x.get('publish_timestamp') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+            
+            logging.info(f"獲取到 {ticker} 的 {len(final_news)} 條一週內新聞（其中 {len(priority_news)} 條為24小時內）")
+            return final_news
             
         except Exception as e:
             logging.error(f"從 Yahoo Finance 獲取新聞失敗: {e}")
             return []
 
     def _scrape_news_content(self, url: str) -> str:
-        """智能爬取新聞內容"""
+        """使用 requests + BeautifulSoup4 智能爬取新聞內容，加強反反爬蟲機制"""
         if not url:
             return ""
             
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Cache-Control': 'max-age=0'
-            }
-            
-            response = requests.get(url, headers=headers, timeout=NEWS_SETTINGS.get('request_timeout', 10))
-            response.raise_for_status()
-            
-            # 使用 BeautifulSoup 解析 HTML
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # 移除不需要的標籤
-            for unwanted in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 
-                                 '.advertisement', '.ad', '.ads', '.sidebar', '.menu',
-                                 '.social-share', '.comments', '.related-articles']):
-                if hasattr(unwanted, 'decompose'):
-                    unwanted.decompose()
+        # 多個 User-Agent 輪換
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
+        
+        import random
+        selected_ua = random.choice(user_agents)
+        
+        # 加強版 headers
+        headers = {
+            'User-Agent': selected_ua,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'DNT': '1',
+            'Pragma': 'no-cache'
+        }
+        
+        # 如果是特定網站，加入 Referer
+        if 'yahoo.com' in url:
+            headers['Referer'] = 'https://finance.yahoo.com/'
+        elif 'reuters.com' in url:
+            headers['Referer'] = 'https://www.reuters.com/'
+        elif 'marketwatch.com' in url:
+            headers['Referer'] = 'https://www.marketwatch.com/'
+        elif 'cnbc.com' in url:
+            headers['Referer'] = 'https://www.cnbc.com/'
+        elif 'bloomberg.com' in url:
+            headers['Referer'] = 'https://www.bloomberg.com/'
+        
+        # 重試機制
+        max_retries = NEWS_SETTINGS.get('max_retries', 3)
+        retry_delay_base = NEWS_SETTINGS.get('retry_delay', 5)
+        min_content_length = NEWS_SETTINGS.get('min_content_length', 50)
+        use_random_delay = NEWS_SETTINGS.get('use_random_delay', True)
+        random_delay_range = NEWS_SETTINGS.get('random_delay_range', [1, 3])
+        
+        for attempt in range(max_retries):
+            try:
+                # 隨機延遲 (如果啟用)
+                if use_random_delay:
+                    delay = random.uniform(random_delay_range[0], random_delay_range[1])
+                    time.sleep(delay)
+                
+                # 使用 session 來保持連接
+                session = requests.Session()
+                session.headers.update(headers)
+                
+                response = session.get(
+                    url, 
+                    timeout=NEWS_SETTINGS.get('request_timeout', 15),
+                    allow_redirects=True,
+                    verify=True
+                )
+                response.raise_for_status()
+                
+                # 使用 BeautifulSoup 解析 HTML
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # 移除不需要的標籤
+                for unwanted in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 
+                                     '.advertisement', '.ad', '.ads', '.sidebar', '.menu',
+                                     '.social-share', '.comments', '.related-articles']):
+                    if hasattr(unwanted, 'decompose'):
+                        unwanted.decompose()
+                    else:
+                        for elem in soup.find_all(unwanted):
+                            elem.decompose()
+                
+                content = self._extract_article_content(soup, url)
+                
+                # 清理和格式化內容
+                content = self._clean_content(content)
+                
+                # 限制內容長度
+                max_length = NEWS_SETTINGS.get('max_content_length', 3000)
+                if len(content) > max_length:
+                    content = content[:max_length] + "..."
+                
+                session.close()
+                return content
+                
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code in [403, 401, 429]:
+                    # 被封鎖，增加延遲後重試
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * retry_delay_base  # 使用配置的重試延遲
+                        logging.warning(f"收到 {e.response.status_code} 錯誤，等待 {wait_time} 秒後重試... (嘗試 {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logging.warning(f"多次重試後仍失敗 {url}: {e}")
+                        return ""
                 else:
-                    for elem in soup.find_all(unwanted):
-                        elem.decompose()
-            
-            content = self._extract_article_content(soup, url)
-            
-            # 清理和格式化內容
-            content = self._clean_content(content)
-            
-            # 限制內容長度
-            max_length = NEWS_SETTINGS.get('max_content_length', 3000)
-            if len(content) > max_length:
-                content = content[:max_length] + "..."
-            
-            time.sleep(NEWS_SETTINGS.get('scraping_delay', 1))
-            return content
-            
-        except requests.exceptions.RequestException as e:
-            logging.warning(f"網路請求失敗 {url}: {e}")
-            return ""
-        except Exception as e:
-            logging.warning(f"爬取新聞內容失敗 {url}: {e}")
-            return ""
+                    logging.warning(f"HTTP 錯誤 {url}: {e}")
+                    return ""
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    logging.warning(f"網路請求失敗，重試中... (嘗試 {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(2)
+                    continue
+                else:
+                    logging.warning(f"網路請求失敗 {url}: {e}")
+                    return ""
+            except Exception as e:
+                logging.warning(f"爬取新聞內容失敗 {url}: {e}")
+                return ""
+        
+        return ""
+
+    def _is_news_relevant(self, title: str, summary: str, ticker: str) -> bool:
+        """檢查新聞是否與股票相關且適合短線投資分析"""
+        if not title:
+            return False
+        
+        # 組合文本進行檢查
+        text = f"{title} {summary}".lower()
+        
+        # 排除不相關的新聞類型
+        exclude_keywords = [
+            'weather', 'sports', 'entertainment', 'celebrity',
+            '天氣', '體育', '娛樂', '明星', '電影', '音樂',
+            'horoscope', '星座', 'recipe', '食譜'
+        ]
+        
+        for keyword in exclude_keywords:
+            if keyword in text:
+                return False
+        
+        # 檢查是否包含股票代碼或公司相關詞語
+        ticker_lower = ticker.lower()
+        if ticker_lower in text:
+            return True
+        
+        # 檢查是否包含財經相關關鍵詞
+        finance_keywords = [
+            'stock', 'shares', 'earnings', 'revenue', 'profit', 'financial',
+            'market', 'trading', 'investment', 'analysis', 'forecast',
+            '股票', '股價', '股份', '營收', '獲利', '財報', '市場', '交易',
+            '投資', '分析', '預測', '財務', '業績'
+        ]
+        
+        for keyword in finance_keywords:
+            if keyword in text:
+                return True
+        
+        return False
     
     def _extract_article_content(self, soup: BeautifulSoup, url: str) -> str:
         """智能提取文章內容"""
@@ -275,7 +574,11 @@ class EnhancedStockAnalyzer:
             'Sponsored content',
             'Cookie Policy',
             'Privacy Policy',
-            'Terms of Service'
+            'Terms of Service',
+            'Read more:',
+            'Continue reading',
+            'Click here',
+            'Learn more'
         ]
         
         for phrase in garbage_phrases:
@@ -287,6 +590,8 @@ class EnhancedStockAnalyzer:
         content = '. '.join(meaningful_sentences)
         
         return content.strip()
+    
+
 
     def analyze_news_sentiment(self, news_list: List[Dict], ticker: str) -> Dict[str, Any]:
         """分析新聞情緒並生成綜合新聞面報告"""
@@ -325,55 +630,73 @@ class EnhancedStockAnalyzer:
                 all_news_content += news_info
             
             # 生成綜合新聞情報分析
+            # 構建新聞標題列表
+            title_list = "\n".join([f"• {title}" for title in news_titles if title])
+            
             prompt = f"""
-            請作為專業的金融分析師，對股票 {ticker} 的以下新聞進行深度分析，並生成一份完整的新聞面情報報告：
+            請作為專業的短線投資分析師，對股票 {ticker} 的以下【一週內最新新聞】進行深度分析，並生成一份完整的短線投資新聞面情報報告：
 
+            【本次分析的新聞標題概覽】
+            {title_list}
+
+            【詳細新聞內容】
             {all_news_content}
 
-            請提供一份專業的新聞面分析報告，包含以下內容：
+            **重要說明：本分析專注於短線投資機會（1-4週內），請特別關注最新24小時內的新聞對股價的即時影響。**
 
-            1. 【新聞面總體評估】
-            - 整體市場情緒傾向與強度
-            - 新聞覆蓋度和關注度分析
-            - 消息面的一致性評估
+            請提供一份專業的短線投資新聞面分析報告，**請務必在報告開頭顯示完整的新聞標題列表**，然後包含以下內容：
 
-            2. 【關鍵事件與主題分析】
-            - 識別最重要的3-5個關鍵事件或主題
-            - 分析每個事件的重要性和影響程度
-            - 事件間的關聯性分析
+            1. 【最新新聞標題一覽】
+            - 列出所有分析的新聞標題，特別標注24小時內的最新消息
+            - 快速識別短線投資的關鍵信息
 
-            3. 【市場影響評估】
-            - 短期市場反應預期（1-4週）
-            - 中期影響分析（1-3個月）
-            - 長期趨勢影響（6-12個月）
+            2. 【短線新聞面總體評估】
+            - 整體市場情緒傾向與強度（針對1-4週內）
+            - 新聞的即時影響力和市場關注度
+            - 消息面對短線交易的影響評估
 
-            4. 【風險與機會識別】
-            - 潛在風險因素
-            - 投資機會點
-            - 需要關注的後續發展
+            3. 【關鍵事件與短線機會分析】
+            - 識別最重要的3-5個短線投資相關事件
+            - 分析每個事件對股價的潛在即時影響
+            - 事件的時效性和緊急程度評估
 
-            5. 【投資策略建議】
-            - 基於新聞面的具體投資建議
-            - 進場時機建議
-            - 風險控制要點
+            4. 【短線市場影響評估】
+            - **短期反應預期（1-7天）** - 重點分析
+            - 中短期影響（1-4週）
+            - 新聞催化劑對股價波動的預期
 
-            請用繁體中文撰寫，生成一份完整且專業的報告。同時提供JSON格式的結構化數據：
+            5. 【短線風險與機會識別】
+            - 短線潛在風險因素（1-4週內）
+            - 短線投資機會點和催化劑
+            - 需要密切關注的後續發展和時間點
+
+            6. 【短線投資策略建議】
+            - 基於最新新聞面的短線投資建議
+            - **進場時機建議**（關鍵！）
+            - **出場策略和止損點**
+            - 短線風險控制要點
+
+            請用繁體中文撰寫，生成一份完整且專業的短線投資報告。同時提供JSON格式的結構化數據：
 
             {{
                 "sentiment": "positive/negative/neutral",
                 "confidence": 信心度(1-10),
                 "sentiment_strength": 情緒強度(1-10),
+                "news_titles": {news_titles},
                 "key_themes": ["主要議題1", "主要議題2", "主要議題3"],
                 "market_impact": {{
-                    "short_term": "短期影響描述",
-                    "medium_term": "中期影響描述", 
-                    "long_term": "長期影響描述"
+                    "immediate": "即時影響描述（1-3天）",
+                    "short_term": "短期影響描述（1-2週）",
+                    "medium_term": "中短期影響描述（2-4週）"
                 }},
-                "risk_factors": ["風險1", "風險2"],
-                "opportunities": ["機會1", "機會2"],
-                "investment_strategy": "投資策略建議",
-                "news_intelligence_report": "完整的新聞面情報分析報告（詳細文字版）",
-                "attention_points": ["關注要點1", "關注要點2"]
+                "short_term_catalysts": ["短線催化劑1", "短線催化劑2"],
+                "risk_factors": ["短線風險1", "短線風險2"],
+                "opportunities": ["短線機會1", "短線機會2"],
+                "entry_timing": "進場時機建議",
+                "exit_strategy": "出場策略建議",
+                "investment_strategy": "短線投資策略建議",
+                "news_intelligence_report": "完整的短線投資新聞面情報分析報告（詳細文字版）",
+                "attention_points": ["短線關注要點1", "短線關注要點2"]
             }}
             """
             
@@ -528,8 +851,18 @@ class EnhancedStockAnalyzer:
             # 新聞面評分
             news_score = self._calculate_news_score(news_sentiment)
             
-            # 綜合評分
-            overall_score = (fundamental_score * 0.4 + technical_score * 0.3 + news_score * 0.3)
+            # 綜合評分 (使用新的權重: 基本面25%, 技術面25%, 新聞面50%)
+            from config.settings import ANALYSIS_SETTINGS
+            
+            fundamental_weight = ANALYSIS_SETTINGS.get('fundamental_weight', 0.25)
+            technical_weight = ANALYSIS_SETTINGS.get('technical_weight', 0.25)
+            news_weight = ANALYSIS_SETTINGS.get('news_weight', 0.5)
+            
+            overall_score = (
+                fundamental_score * fundamental_weight + 
+                technical_score * technical_weight + 
+                news_score * news_weight
+            )
             
             # 投資建議
             investment_recommendation = self._get_investment_recommendation(overall_score)
@@ -564,8 +897,14 @@ class EnhancedStockAnalyzer:
                     'score': round(news_score, 2),
                     'sentiment': news_sentiment.get('sentiment', 'neutral'),
                     'confidence': news_sentiment.get('confidence', 0),
+                    'sentiment_strength': news_sentiment.get('sentiment_strength', 0),
+                    'news_titles': news_sentiment.get('news_titles', []),
                     'key_themes': news_sentiment.get('key_themes', []),
-                    'short_term_impact': news_sentiment.get('short_term_impact', ''),
+                    'market_impact': news_sentiment.get('market_impact', {}),
+                    'risk_factors': news_sentiment.get('risk_factors', []),
+                    'opportunities': news_sentiment.get('opportunities', []),
+                    'investment_strategy': news_sentiment.get('investment_strategy', ''),
+                    'attention_points': news_sentiment.get('attention_points', []),
                     'news_count': len(news_data),
                     'news_intelligence_report': news_sentiment.get('news_intelligence_report', '')
                 },

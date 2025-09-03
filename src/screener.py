@@ -1,5 +1,6 @@
 """
 股票篩選模組 - 根據價值投資標準篩選股票
+包含增強的價值投資指標分析和個股綜合分析
 """
 
 import pandas as pd
@@ -8,6 +9,8 @@ import logging
 from typing import Dict, List, Tuple, Any
 from config.settings import SCREENING_CRITERIA
 from src.utils import format_currency, format_percentage, format_ratio
+from src.enhanced_value_analyzer import EnhancedValueAnalyzer
+from src.stock_individual_analyzer import StockIndividualAnalyzer
 
 
 class ValueScreener:
@@ -16,6 +19,452 @@ class ValueScreener:
     def __init__(self, criteria: Dict[str, float] = None):
         self.criteria = criteria or SCREENING_CRITERIA
         self.screening_results = {}
+        self.enhanced_analyzer = EnhancedValueAnalyzer()
+        self.individual_analyzer = StockIndividualAnalyzer()
+    
+    def enhanced_analysis(self, tickers: List[str], use_enhanced_metrics: bool = True) -> pd.DataFrame:
+        """
+        使用增強價值投資指標進行全面分析
+        
+        Args:
+            tickers: 股票代號列表
+            use_enhanced_metrics: 是否使用增強指標
+            
+        Returns:
+            包含增強指標的分析結果DataFrame
+        """
+        logging.info(f"開始對 {len(tickers)} 支股票進行增強價值投資分析...")
+        
+        if use_enhanced_metrics:
+            # 使用增強分析器進行全面分析
+            results_df = self.enhanced_analyzer.batch_analyze_stocks(tickers)
+            
+            if not results_df.empty:
+                # 添加傳統價值投資評分以便比較
+                basic_score_df = self.calculate_basic_value_scores(results_df)
+                
+                # 合併結果
+                enhanced_df = pd.merge(results_df, basic_score_df[['ticker', 'basic_value_score']], 
+                                     on='ticker', how='left')
+                
+                logging.info(f"完成增強分析，共 {len(enhanced_df)} 支股票")
+                return enhanced_df
+        
+        # 如果不使用增強指標或增強分析失敗，回退到基本分析
+        logging.info("使用基本分析方法...")
+        return self.basic_analysis(tickers)
+    
+    def calculate_basic_value_scores(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        計算基本價值投資評分（用於與增強指標比較）
+        """
+        basic_df = df.copy()
+        
+        # 基本評分權重
+        weights = {
+            'pe_weight': 0.25,
+            'pb_weight': 0.20,
+            'dividend_weight': 0.15,
+            'debt_weight': 0.20,
+            'growth_weight': 0.20
+        }
+        
+        basic_df['basic_value_score'] = 0
+        
+        # PE評分 (越低越好)
+        pe_col = 'trailing_pe' if 'trailing_pe' in df.columns else 'trailingPE'
+        if pe_col in df.columns:
+            pe_valid = basic_df[basic_df[pe_col].between(5, 50, inclusive='both')]
+            if len(pe_valid) > 0:
+                pe_rank = pe_valid[pe_col].rank(ascending=True, pct=True)
+                basic_df.loc[pe_valid.index, 'basic_value_score'] += pe_rank * weights['pe_weight'] * 100
+        
+        # PB評分 (越低越好)
+        pb_col = 'price_to_book' if 'price_to_book' in df.columns else 'priceToBook'
+        if pb_col in df.columns:
+            pb_valid = basic_df[basic_df[pb_col].between(0.1, 10, inclusive='both')]
+            if len(pb_valid) > 0:
+                pb_rank = pb_valid[pb_col].rank(ascending=True, pct=True)
+                basic_df.loc[pb_valid.index, 'basic_value_score'] += pb_rank * weights['pb_weight'] * 100
+        
+        # 股息評分
+        dividend_col = 'dividend_yield' if 'dividend_yield' in df.columns else 'dividendYield'
+        if dividend_col in df.columns:
+            div_valid = basic_df[basic_df[dividend_col].notna()]
+            if len(div_valid) > 0:
+                div_rank = div_valid[dividend_col].rank(ascending=False, pct=True)
+                basic_df.loc[div_valid.index, 'basic_value_score'] += div_rank * weights['dividend_weight'] * 100
+        
+        # 債務評分 (越低越好)
+        debt_col = 'debt_to_equity' if 'debt_to_equity' in df.columns else 'debtToEquity'
+        if debt_col in df.columns:
+            debt_valid = basic_df[basic_df[debt_col].between(0, 5, inclusive='both')]
+            if len(debt_valid) > 0:
+                debt_rank = debt_valid[debt_col].rank(ascending=True, pct=True)
+                basic_df.loc[debt_valid.index, 'basic_value_score'] += debt_rank * weights['debt_weight'] * 100
+        
+        # 成長評分
+        growth_col = 'revenue_growth_3y_cagr' if 'revenue_growth_3y_cagr' in df.columns else None
+        if growth_col and growth_col in df.columns:
+            growth_valid = basic_df[basic_df[growth_col].notna()]
+            if len(growth_valid) > 0:
+                growth_rank = growth_valid[growth_col].rank(ascending=False, pct=True)
+                basic_df.loc[growth_valid.index, 'basic_value_score'] += growth_rank * weights['growth_weight'] * 100
+        
+        return basic_df[['ticker', 'basic_value_score']]
+    
+    def basic_analysis(self, tickers: List[str]) -> pd.DataFrame:
+        """基本分析方法（向後兼容）"""
+        # 這裡可以實現基本的分析邏輯
+        # 暫時返回空DataFrame
+        return pd.DataFrame()
+    
+    def get_enhanced_top_stocks(self, tickers: List[str], top_n: int = 10, 
+                              analysis_type: str = 'comprehensive') -> pd.DataFrame:
+        """
+        獲取增強分析的頂級股票
+        
+        Args:
+            tickers: 股票代號列表
+            top_n: 返回前N名
+            analysis_type: 分析類型 ('comprehensive', 'growth', 'value', 'quality')
+            
+        Returns:
+            排序後的頂級股票DataFrame
+        """
+        logging.info(f"開始 {analysis_type} 分析，目標前 {top_n} 名股票...")
+        
+        # 進行增強分析
+        analysis_df = self.enhanced_analysis(tickers, use_enhanced_metrics=True)
+        
+        if analysis_df.empty:
+            logging.warning("增強分析未返回結果")
+            return pd.DataFrame()
+        
+        # 根據分析類型選擇排序標準
+        if analysis_type == 'comprehensive':
+            sort_column = 'comprehensive_score'
+        elif analysis_type == 'growth':
+            # 創建成長評分
+            analysis_df['growth_score'] = self._calculate_growth_score(analysis_df)
+            sort_column = 'growth_score'
+        elif analysis_type == 'value':
+            # 創建純價值評分
+            analysis_df['pure_value_score'] = self._calculate_pure_value_score(analysis_df)
+            sort_column = 'pure_value_score'
+        elif analysis_type == 'quality':
+            # 創建品質評分
+            analysis_df['quality_score'] = self._calculate_quality_score(analysis_df)
+            sort_column = 'quality_score'
+        else:
+            sort_column = 'comprehensive_score'
+        
+        # 排序並取前N名
+        if sort_column in analysis_df.columns:
+            top_stocks = analysis_df.nlargest(top_n, sort_column).reset_index(drop=True)
+            top_stocks['rank'] = range(1, len(top_stocks) + 1)
+        else:
+            logging.warning(f"排序欄位 {sort_column} 不存在，使用綜合評分")
+            top_stocks = analysis_df.nlargest(top_n, 'comprehensive_score').reset_index(drop=True)
+            top_stocks['rank'] = range(1, len(top_stocks) + 1)
+        
+        logging.info(f"完成 {analysis_type} 分析，返回 {len(top_stocks)} 支股票")
+        return top_stocks
+    
+    def _calculate_growth_score(self, df: pd.DataFrame) -> pd.Series:
+        """計算成長評分"""
+        score = pd.Series(0.0, index=df.index)
+        
+        # PEG比率評分
+        peg_mask = df['peg_ratio'].between(0.1, 2.0)
+        if peg_mask.any():
+            score[peg_mask] += (2.0 - df.loc[peg_mask, 'peg_ratio']) * 25
+        
+        # 營收成長評分
+        revenue_growth = df['revenue_growth_3y_cagr'].fillna(0)
+        score += np.clip(revenue_growth * 200, 0, 25)  # 最高25分
+        
+        # EPS成長評分
+        eps_growth = df['eps_growth_3y_cagr'].fillna(0)
+        score += np.clip(eps_growth * 150, 0, 25)  # 最高25分
+        
+        # FCF成長評分
+        fcf_yield = df['fcf_yield'].fillna(0)
+        score += np.clip(fcf_yield * 250, 0, 25)  # 最高25分
+        
+        return score
+    
+    def _calculate_pure_value_score(self, df: pd.DataFrame) -> pd.Series:
+        """計算純價值評分"""
+        score = pd.Series(0.0, index=df.index)
+        
+        # P/E評分 (越低越好)
+        pe_data = df['trailing_pe'] if 'trailing_pe' in df.columns else df.get('trailingPE', pd.Series())
+        if not pe_data.empty:
+            pe_valid = pe_data.between(5, 30)
+            if pe_valid.any():
+                score[pe_valid] += (30 - pe_data[pe_valid]) / 25 * 25  # 最高25分
+        
+        # P/B評分 (越低越好)
+        pb_data = df['price_to_book'] if 'price_to_book' in df.columns else df.get('priceToBook', pd.Series())
+        if not pb_data.empty:
+            pb_valid = pb_data.between(0.1, 5)
+            if pb_valid.any():
+                score[pb_valid] += (5 - pb_data[pb_valid]) / 4.9 * 25  # 最高25分
+        
+        # EV/EBITDA評分 (越低越好)
+        ev_ebitda = df['ev_ebitda'].fillna(100)
+        ev_valid = ev_ebitda.between(5, 25)
+        if ev_valid.any():
+            score[ev_valid] += (25 - ev_ebitda[ev_valid]) / 20 * 25  # 最高25分
+        
+        # FCF殖利率評分 (越高越好)
+        fcf_yield = df['fcf_yield'].fillna(0)
+        score += np.clip(fcf_yield * 250, 0, 25)  # 最高25分
+        
+        return score
+    
+    def _calculate_quality_score(self, df: pd.DataFrame) -> pd.Series:
+        """計算品質評分"""
+        score = pd.Series(0.0, index=df.index)
+        
+        # ROIC評分
+        roic = df['roic'].fillna(0)
+        score += np.clip(roic * 100, 0, 25)  # 最高25分
+        
+        # ROA評分
+        roa = df['roa'].fillna(0)
+        score += np.clip(roa * 125, 0, 25)  # 最高25分
+        
+        # 流動比率評分
+        current_ratio = df['current_ratio'].fillna(0)
+        optimal_ratio = 1.5
+        score += 25 - np.abs(current_ratio - optimal_ratio) * 10  # 最佳為1.5
+        score = np.clip(score, 0, 100)
+        
+        # 債務健康評分
+        debt_to_assets = df['debt_to_assets'].fillna(0.5)
+        score += (1 - debt_to_assets) * 25  # 債務越低越好
+        
+        return np.clip(score, 0, 100)
+    
+    def analyze_individual_stock_comprehensive(self, ticker: str) -> Dict[str, Any]:
+        """
+        對單一股票進行綜合分析 (新聞面、技術面、籌碼面)
+        
+        Args:
+            ticker: 股票代號
+            
+        Returns:
+            包含綜合分析結果的字典
+        """
+        logging.info(f"開始對 {ticker} 進行個股綜合分析...")
+        
+        try:
+            # 使用個股分析器進行全面分析
+            result = self.individual_analyzer.analyze_stock_comprehensive(ticker)
+            
+            if result:
+                # 添加價值投資評分以便比較
+                enhanced_result = self.enhanced_analyzer.analyze_stock_comprehensive(ticker)
+                if enhanced_result:
+                    result['value_investment_score'] = enhanced_result.get('comprehensive_score', 0)
+                    result['value_investment_grade'] = enhanced_result.get('investment_grade', 'N/A')
+                
+                logging.info(f"完成 {ticker} 的個股綜合分析")
+                return result
+            else:
+                logging.warning(f"無法獲取 {ticker} 的分析數據")
+                return {}
+                
+        except Exception as e:
+            logging.error(f"分析 {ticker} 時發生錯誤: {e}")
+            return {}
+    
+    def compare_stocks_comprehensive(self, tickers: List[str]) -> pd.DataFrame:
+        """
+        對多支股票進行綜合比較分析
+        
+        Args:
+            tickers: 股票代號列表
+            
+        Returns:
+            包含比較結果的DataFrame
+        """
+        logging.info(f"開始對 {len(tickers)} 支股票進行比較分析...")
+        
+        results = []
+        
+        for i, ticker in enumerate(tickers):
+            logging.info(f"分析進度: {i+1}/{len(tickers)} - {ticker}")
+            
+            try:
+                result = self.analyze_individual_stock_comprehensive(ticker)
+                if result:
+                    results.append(result)
+                
+                # 避免API限制
+                if i < len(tickers) - 1:
+                    import time
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logging.error(f"比較分析 {ticker} 時發生錯誤: {e}")
+                continue
+        
+        if results:
+            df = pd.DataFrame(results)
+            
+            # 按綜合評分排序
+            if '综合評分' in df.columns:
+                df = df.sort_values('综合評分', ascending=False).reset_index(drop=True)
+                df['rank'] = range(1, len(df) + 1)
+            
+            logging.info(f"完成 {len(results)} 支股票的比較分析")
+            return df
+        else:
+            logging.warning("比較分析未返回有效結果")
+            return pd.DataFrame()
+    
+    def get_news_focused_analysis(self, ticker: str) -> Dict[str, Any]:
+        """
+        以新聞面為重點的股票分析
+        
+        Args:
+            ticker: 股票代號
+            
+        Returns:
+            重點關注新聞面的分析結果
+        """
+        logging.info(f"開始對 {ticker} 進行新聞重點分析...")
+        
+        try:
+            # 獲取完整分析
+            full_analysis = self.analyze_individual_stock_comprehensive(ticker)
+            
+            if not full_analysis:
+                return {}
+            
+            # 提取新聞相關信息
+            news_analysis = {
+                'ticker': ticker,
+                'company_name': full_analysis.get('company_name', 'N/A'),
+                'current_price': full_analysis.get('current_price', 0),
+                'analysis_time': full_analysis.get('analysis_time', ''),
+                
+                # 新聞面指標 (主要關注)
+                'news_sentiment_score': full_analysis.get('news_sentiment_score', 50),
+                'sentiment_trend': full_analysis.get('sentiment_trend', 'neutral'),
+                'news_impact_score': full_analysis.get('news_impact_score', 50),
+                'news_volume': full_analysis.get('news_volume', 0),
+                'positive_news_count': full_analysis.get('positive_news_count', 0),
+                'negative_news_count': full_analysis.get('negative_news_count', 0),
+                'recent_news': full_analysis.get('recent_news', []),
+                
+                # 輔助指標
+                'technical_score': full_analysis.get('technical_score', 50),
+                'chip_score': full_analysis.get('chip_score', 50),
+                'comprehensive_score': full_analysis.get('综合評分', 0),
+                'investment_advice': full_analysis.get('投資建議', 'N/A')
+            }
+            
+            # 重新計算以新聞為主的評分 (新聞面權重提高到70%)
+            news_focused_score = (
+                news_analysis['news_sentiment_score'] * 0.7 +
+                news_analysis['technical_score'] * 0.2 +
+                news_analysis['chip_score'] * 0.1
+            )
+            
+            news_analysis['news_focused_score'] = round(news_focused_score, 1)
+            news_analysis['news_focused_grade'] = self._get_news_focused_grade(news_focused_score)
+            
+            logging.info(f"完成 {ticker} 的新聞重點分析")
+            return news_analysis
+            
+        except Exception as e:
+            logging.error(f"新聞重點分析 {ticker} 時發生錯誤: {e}")
+            return {}
+    
+    def _get_news_focused_grade(self, score: float) -> str:
+        """根據新聞重點評分獲取等級"""
+        if score >= 85:
+            return "新聞極度正面"
+        elif score >= 75:
+            return "新聞明顯正面"
+        elif score >= 65:
+            return "新聞偏向正面"
+        elif score >= 55:
+            return "新聞中性偏正"
+        elif score >= 45:
+            return "新聞中性"
+        elif score >= 35:
+            return "新聞偏向負面"
+        elif score >= 25:
+            return "新聞明顯負面"
+        else:
+            return "新聞極度負面"
+    
+    def batch_news_analysis(self, tickers: List[str]) -> pd.DataFrame:
+        """
+        批量進行新聞面分析
+        
+        Args:
+            tickers: 股票代號列表
+            
+        Returns:
+            新聞分析結果DataFrame
+        """
+        logging.info(f"開始批量新聞分析 {len(tickers)} 支股票...")
+        
+        results = []
+        
+        for i, ticker in enumerate(tickers):
+            logging.info(f"新聞分析進度: {i+1}/{len(tickers)} - {ticker}")
+            
+            try:
+                news_result = self.get_news_focused_analysis(ticker)
+                if news_result:
+                    results.append(news_result)
+                
+                # 避免API限制
+                if i < len(tickers) - 1:
+                    import time
+                    time.sleep(1.5)  # 新聞獲取需要更多等待時間
+                    
+            except Exception as e:
+                logging.error(f"批量新聞分析 {ticker} 時發生錯誤: {e}")
+                continue
+        
+        if results:
+            df = pd.DataFrame(results)
+            
+            # 按新聞重點評分排序
+            if 'news_focused_score' in df.columns:
+                df = df.sort_values('news_focused_score', ascending=False).reset_index(drop=True)
+                df['news_rank'] = range(1, len(df) + 1)
+            
+            logging.info(f"完成 {len(results)} 支股票的批量新聞分析")
+            return df
+        else:
+            logging.warning("批量新聞分析未返回有效結果")
+            return pd.DataFrame()
+    
+    def generate_individual_analysis_report(self, ticker: str) -> str:
+        """
+        生成個股分析報告
+        
+        Args:
+            ticker: 股票代號
+            
+        Returns:
+            格式化的分析報告字符串
+        """
+        analysis_result = self.analyze_individual_stock_comprehensive(ticker)
+        
+        if not analysis_result:
+            return f"無法生成 {ticker} 的分析報告"
+        
+        return self.individual_analyzer.generate_analysis_report(analysis_result)
     
     def calculate_value_score(self, df: pd.DataFrame) -> pd.DataFrame:
         """
