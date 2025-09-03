@@ -10,6 +10,7 @@ import json
 from typing import Dict, List, Any, Optional
 from config.settings import GEMINI_SETTINGS
 from src.utils import load_env_variables, retry_on_failure, format_currency, format_percentage, format_ratio
+from src.gemini_key_manager import get_current_gemini_key, report_gemini_error, report_gemini_success
 
 
 class GeminiAnalyzer:
@@ -23,16 +24,17 @@ class GeminiAnalyzer:
     def _setup_gemini(self) -> None:
         """設置 Gemini API"""
         try:
-            api_key = self.env_vars.get('gemini_api_key')
-            if not api_key or api_key == 'your_gemini_api_key_here':
-                raise ValueError("請在 .env 檔案中設置正確的 GEMINI_API_KEY")
+            api_key = get_current_gemini_key()
+            if not api_key:
+                raise ValueError("無法獲取有效的 Gemini API Key，請檢查 .env 檔案中的 GEMINI_API_KEY 設定")
             
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(GEMINI_SETTINGS['model'])
-            logging.info("Gemini AI 初始化成功")
+            logging.info("Gemini AI 初始化成功，使用 Key 管理器")
             
         except Exception as e:
             logging.error(f"Gemini AI 初始化失敗: {e}")
+            report_gemini_error(f"Gemini AI 初始化失敗: {e}")
             raise
     
     def create_analysis_prompt(self, stock_data: Dict[str, Any]) -> str:
@@ -106,6 +108,9 @@ class GeminiAnalyzer:
                 )
             )
             
+            # 報告成功使用 API
+            report_gemini_success()
+            
             analysis_result = {
                 'ticker': ticker,
                 'company_name': stock_data.get('company_name', 'Unknown'),
@@ -123,6 +128,16 @@ class GeminiAnalyzer:
             
         except Exception as e:
             logging.error(f"分析 {ticker} 時發生錯誤: {e}")
+            # 報告錯誤並嘗試切換 Key
+            report_gemini_error(f"分析 {ticker} 失敗: {e}")
+            
+            # 嘗試重新初始化 Gemini 以使用新的 Key
+            try:
+                self._setup_gemini()
+                logging.info(f"已切換到新的 API Key，重新嘗試分析 {ticker}")
+            except Exception as setup_error:
+                logging.error(f"重新初始化 Gemini 失敗: {setup_error}")
+            
             return {
                 'ticker': ticker,
                 'error': str(e),
@@ -312,6 +327,7 @@ class GeminiAnalyzer:
         
         # JSON 格式（保持結構）
         with open(f"{base_path}.json", 'w', encoding='utf-8') as f:
-            json.dump(analysis_results, f, ensure_ascii=False, indent=2, default=str)
+            from src.utils import DateTimeEncoder
+            json.dump(analysis_results, f, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
         
         logging.info(f"分析結果已保存到: {base_path}.csv 和 {base_path}.json")

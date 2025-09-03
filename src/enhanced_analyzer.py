@@ -15,6 +15,19 @@ from bs4 import BeautifulSoup
 from config.settings import GEMINI_SETTINGS, API_SETTINGS, NEWS_SETTINGS, MULTI_AGENT_SETTINGS
 from src.utils import load_env_variables, retry_on_failure
 
+try:
+    from .gemini_news_search import GeminiNewsSearcher
+    from .gemini_key_manager import (get_gemini_keys_status, get_current_gemini_key, 
+                                    get_agent_gemini_key, report_gemini_error, report_gemini_success)
+except ImportError:
+    GeminiNewsSearcher = None
+    get_gemini_keys_status = None
+    get_current_gemini_key = None
+    get_agent_gemini_key = None
+    report_gemini_error = None
+    report_gemini_success = None
+    logging.warning("無法導入 GeminiNewsSearcher 或 Key 管理器，Gemini 新聞搜尋功能將不可用")
+
 
 class EnhancedStockAnalyzer:
     """增強版股票分析器 - 整合技術面、基本面、新聞面和情緒面"""
@@ -28,17 +41,25 @@ class EnhancedStockAnalyzer:
     def _setup_gemini(self) -> None:
         """設置 Gemini API"""
         try:
-            api_key = self.env_vars.get('gemini_api_key')
-            if not api_key or api_key == 'your_gemini_api_key_here':
-                raise ValueError("請在 .env 檔案中設置正確的 GEMINI_API_KEY")
+            if get_current_gemini_key:
+                api_key = get_current_gemini_key()
+                if not api_key:
+                    raise ValueError("無法獲取有效的 Gemini API Key，請檢查 .env 檔案中的 GEMINI_API_KEY 設定")
+            else:
+                # 回退到環境變數
+                api_key = self.env_vars.get('gemini_api_key')
+                if not api_key or api_key == 'your_gemini_api_key_here':
+                    raise ValueError("請在 .env 檔案中設置正確的 GEMINI_API_KEY")
             
             genai.configure(api_key=api_key)
             # 使用更便宜的模型或調整配額設定
             self.model = genai.GenerativeModel('gemini-1.5-flash')  # 使用較便宜的模型
-            logging.info("Gemini AI 初始化成功")
+            logging.info("Gemini AI 初始化成功，使用 Key 管理器" if get_current_gemini_key else "Gemini AI 初始化成功，使用環境變數")
             
         except Exception as e:
             logging.error(f"Gemini AI 初始化失敗: {e}")
+            if report_gemini_error:
+                report_gemini_error(f"Gemini AI 初始化失敗: {e}")
             self.model = None
 
     def translate_to_chinese(self, text: str) -> str:
@@ -66,6 +87,10 @@ class EnhancedStockAnalyzer:
             response = self.model.generate_content(prompt)
             translated_text = response.text.strip()
             
+            # 報告成功使用 API
+            if report_gemini_success:
+                report_gemini_success()
+            
             # 移除可能的引號或多餘文字
             if translated_text.startswith('"') and translated_text.endswith('"'):
                 translated_text = translated_text[1:-1]
@@ -76,6 +101,30 @@ class EnhancedStockAnalyzer:
             
         except Exception as e:
             logging.warning(f"翻譯失敗: {e}, 返回原文")
+            # 報告錯誤並嘗試切換 Key
+            if report_gemini_error:
+                report_gemini_error(f"翻譯失敗: {e}")
+                
+            # 嘗試重新初始化 Gemini 以使用新的 Key
+            try:
+                self._setup_gemini()
+                logging.info("已切換到新的 API Key，重新嘗試翻譯")
+                if self.model:
+                    response = self.model.generate_content(prompt)
+                    if report_gemini_success:
+                        report_gemini_success()
+                    translated_text = response.text.strip()
+                    
+                    # 移除可能的引號或多餘文字
+                    if translated_text.startswith('"') and translated_text.endswith('"'):
+                        translated_text = translated_text[1:-1]
+                    if translated_text.startswith('「') and translated_text.endswith('」'):
+                        translated_text = translated_text[1:-1]
+                        
+                    return translated_text
+            except Exception as retry_error:
+                logging.error(f"重試翻譯失敗: {retry_error}")
+            
             return text
 
     def batch_translate_titles(self, titles: List[str]) -> List[str]:
@@ -144,37 +193,108 @@ class EnhancedStockAnalyzer:
             return [self.translate_to_chinese(title) for title in titles]
 
     def get_stock_news(self, ticker: str, days: int = 7) -> List[Dict]:
-        """獲取股票相關新聞（支持多種來源）"""
+        """獲取股票相關新聞（支持多種來源，確保至少5條成功爬取內容的新聞）"""
         try:
             # 主要來源：yfinance
             news_list = self._get_yahoo_news(ticker)
             
-            # 爬取新聞內容（加強容錯處理）
-            if NEWS_SETTINGS.get('scrape_full_content', True):
+            # 設定目標：至少5條成功爬取內容的新聞
+            target_successful_news = 5
+            max_attempts = 3
+            attempt = 0
+            
+            while attempt < max_attempts:
+                attempt += 1
+                
+                # 如果需要更多新聞，使用 Gemini 補充
+                if not news_list or len(news_list) < 10:  # 確保有足夠的候選新聞
+                    if not news_list:
+                        logging.warning(f"未找到 {ticker} 的新聞，嘗試使用 Gemini 備用搜尋...")
+                    else:
+                        logging.info(f"新聞數量不足，使用 Gemini 補充更多新聞...")
+                    
+                    gemini_news = self._get_gemini_news(ticker, days, max_results=10)
+                    if gemini_news:
+                        if not news_list:
+                            news_list = gemini_news
+                        else:
+                            # 合併新聞，避免重複
+                            existing_titles = {news.get('title', '') for news in news_list}
+                            for new_news in gemini_news:
+                                if new_news.get('title', '') not in existing_titles:
+                                    news_list.append(new_news)
+                        
+                        logging.info(f"✅ Gemini 搜尋到 {len(gemini_news)} 條新聞，總計 {len(news_list)} 條")
+                
+                if not news_list:
+                    logging.warning(f"❌ 第 {attempt} 次嘗試未找到 {ticker} 的新聞")
+                    continue
+                
+                # 爬取新聞內容並計算成功數量
                 successful_scrapes = 0
                 failed_scrapes = 0
                 
-                for i, news_item in enumerate(news_list):
-                    try:
-                        logging.info(f"正在爬取第 {i+1}/{len(news_list)} 條新聞內容...")
-                        content = self._scrape_news_content(news_item['url'])
-                        
-                        if content and len(content) > NEWS_SETTINGS.get('min_content_length', 50):  # 確保內容有意義
-                            news_item['content'] = content
-                            successful_scrapes += 1
-                            logging.info(f"✅ 成功爬取新聞內容 ({len(content)} 字元)")
-                        else:
-                            news_item['content'] = news_item.get('summary', '')  # 使用摘要作為備用
-                            failed_scrapes += 1
-                            logging.warning(f"❌ 新聞內容爬取失敗，使用摘要代替")
+                if NEWS_SETTINGS.get('scrape_full_content', True):
+                    for i, news_item in enumerate(news_list):
+                        try:
+                            url = news_item.get('url', '')
                             
-                    except Exception as e:
+                            # 檢查 URL 有效性
+                            if not url or url in ['#', ''] or not url.startswith(('http://', 'https://')):
+                                logging.info(f"跳過第 {i+1} 條新聞：無效的 URL ({url})")
+                                news_item['content'] = news_item.get('summary', '')
+                                # 如果摘要足夠長，也算作成功
+                                if len(news_item.get('summary', '')) > 50:
+                                    successful_scrapes += 1
+                                else:
+                                    failed_scrapes += 1
+                                continue
+                            
+                            logging.info(f"正在爬取第 {i+1}/{len(news_list)} 條新聞內容...")
+                            content = self._scrape_news_content(url)
+                            
+                            if content and len(content) > NEWS_SETTINGS.get('min_content_length', 50):
+                                news_item['content'] = content
+                                successful_scrapes += 1
+                                logging.info(f"✅ 成功爬取新聞內容 ({len(content)} 字元)")
+                            else:
+                                news_item['content'] = news_item.get('summary', '')
+                                # 如果摘要足夠長，也算作成功
+                                if len(news_item.get('summary', '')) > 50:
+                                    successful_scrapes += 1
+                                else:
+                                    failed_scrapes += 1
+                                logging.warning(f"❌ 新聞內容爬取失敗，使用摘要代替")
+                                
+                        except Exception as e:
+                            news_item['content'] = news_item.get('summary', '')
+                            if len(news_item.get('summary', '')) > 50:
+                                successful_scrapes += 1
+                            else:
+                                failed_scrapes += 1
+                            logging.warning(f"❌ 爬取新聞內容時發生錯誤: {e}")
+                            continue
+                    
+                    logging.info(f"新聞內容處理完成: 成功 {successful_scrapes} 條，失敗 {failed_scrapes} 條")
+                    
+                    # 檢查是否達到目標
+                    if successful_scrapes >= target_successful_news:
+                        logging.info(f"✅ 已獲得 {successful_scrapes} 條有效新聞，達到目標！")
+                        break
+                    elif attempt < max_attempts:
+                        logging.warning(f"⚠️ 只有 {successful_scrapes} 條有效新聞，需要 {target_successful_news} 條，嘗試第 {attempt + 1} 次搜尋...")
+                        # 清空現有新聞列表，重新搜尋
+                        news_list = []
+                else:
+                    # 如果不爬取內容，直接使用摘要
+                    for news_item in news_list:
                         news_item['content'] = news_item.get('summary', '')
-                        failed_scrapes += 1
-                        logging.warning(f"❌ 爬取新聞內容時發生錯誤: {e}")
-                        continue
-                
-                logging.info(f"新聞內容爬取完成: 成功 {successful_scrapes} 條，失敗 {failed_scrapes} 條")
+                    successful_scrapes = len(news_list)
+                    break
+            
+            if not news_list:
+                logging.error(f"❌ 經過 {max_attempts} 次嘗試，仍無法獲取 {ticker} 的新聞")
+                return []
             
             # 翻譯新聞標題
             if NEWS_SETTINGS.get('translate_titles', True) and news_list:
@@ -198,6 +318,12 @@ class EnhancedStockAnalyzer:
                     logging.warning(f"翻譯新聞標題失敗: {e}")
             
             self.news_cache[ticker] = news_list
+            logging.info(f"成功獲取 {ticker} 的 {len(news_list)} 條新聞")
+            return news_list
+            
+        except Exception as e:
+            logging.error(f"獲取 {ticker} 新聞時發生錯誤: {e}")
+            return []
             logging.info(f"成功獲取 {ticker} 的 {len(news_list)} 條新聞")
             return news_list
             
@@ -297,7 +423,7 @@ class EnhancedStockAnalyzer:
                         'summary': summary,
                         'publisher': publisher,
                         'publish_time': publish_time,
-                        'publish_timestamp': publish_timestamp,
+                        'publish_timestamp': publish_timestamp,  # 保持為 datetime 物件
                         'url': url,
                         'source': 'Yahoo Finance',
                         'content': '',  # 將在後續填充
@@ -330,6 +456,128 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logging.error(f"從 Yahoo Finance 獲取新聞失敗: {e}")
             return []
+
+    def _get_gemini_news(self, ticker: str, days: int = 7, max_results: int = 8) -> List[Dict]:
+        """使用 Gemini grounding 搜尋股票新聞作為備用方案"""
+        if not GeminiNewsSearcher:
+            logging.warning("GeminiNewsSearcher 不可用")
+            return []
+            
+        try:
+            # 初始化 Gemini 搜尋器
+            gemini_searcher = GeminiNewsSearcher()
+            
+            if not gemini_searcher.is_available():
+                logging.warning("Gemini 服務不可用")
+                return []
+            
+            # 獲取公司名稱用於搜尋
+            company_name = self._get_company_name(ticker)
+            
+            # 使用 Gemini 搜尋新聞
+            news_results = gemini_searcher.search_stock_news(
+                ticker=ticker,
+                company_name=company_name,
+                days=days,
+                max_results=max_results
+            )
+            
+            # 轉換格式以符合系統預期
+            formatted_news = []
+            for news in news_results:
+                # 處理時間戳，確保是數值而非 datetime 對象
+                time_str = news.get('published_time', '')
+                timestamp = None
+                if time_str:
+                    try:
+                        dt = self._parse_time_string(time_str)
+                        if dt:
+                            timestamp = dt.timestamp()  # 轉換為時間戳
+                    except:
+                        timestamp = None
+                
+                formatted_item = {
+                    'title': news.get('title', ''),
+                    'summary': news.get('summary', ''),
+                    'publisher': news.get('source', 'Gemini Search'),
+                    'publish_time': time_str,
+                    'publish_timestamp': timestamp,
+                    'url': news.get('url', ''),
+                    'source': 'Gemini Grounding',
+                    'content': news.get('content', ''),
+                    'is_recent': True  # Gemini 結果通常是最新的
+                }
+                
+                if formatted_item['title']:  # 確保有標題
+                    formatted_news.append(formatted_item)
+            
+            logging.info(f"Gemini 搜尋到 {len(formatted_news)} 條 {ticker} 新聞")
+            return formatted_news
+            
+        except Exception as e:
+            logging.error(f"Gemini 新聞搜尋失敗: {e}")
+            return []
+    
+    def _get_company_name(self, ticker: str) -> Optional[str]:
+        """獲取公司名稱用於新聞搜尋"""
+        try:
+            # 嘗試從 yfinance 獲取公司名稱
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            company_name = info.get('longName') or info.get('shortName')
+            
+            if company_name:
+                return company_name
+                
+            # 對於台股，提供一些常見的中文名稱映射
+            if ticker.endswith('.TW'):
+                common_names = {
+                    '2330.TW': '台積電',
+                    '2317.TW': '鴻海',
+                    '2454.TW': '聯發科',
+                    '2881.TW': '富邦金',
+                    '6505.TW': '台塑化',
+                    '2412.TW': '中華電',
+                    '2303.TW': '聯電',
+                    '3008.TW': '大立光',
+                    '2002.TW': '中鋼',
+                    '1301.TW': '台塑'
+                }
+                return common_names.get(ticker)
+                
+        except Exception as e:
+            logging.warning(f"無法獲取 {ticker} 的公司名稱: {e}")
+            
+        return None
+    
+    def _parse_time_string(self, time_str: str) -> Optional[datetime]:
+        """解析時間字串為 datetime 物件"""
+        if not time_str:
+            return None
+            
+        try:
+            # 嘗試不同的時間格式
+            formats = [
+                '%Y-%m-%d',
+                '%Y-%m-%d %H:%M:%S',
+                '%Y/%m/%d',
+                '%Y/%m/%d %H:%M:%S',
+                '%m/%d/%Y',
+                '%d/%m/%Y'
+            ]
+            
+            for fmt in formats:
+                try:
+                    return datetime.strptime(time_str, fmt)
+                except ValueError:
+                    continue
+                    
+            # 如果都不匹配，返回當前時間
+            return datetime.now()
+            
+        except Exception as e:
+            logging.warning(f"解析時間字串失敗: {time_str}, {e}")
+            return datetime.now()
 
     def _scrape_news_content(self, url: str) -> str:
         """使用 requests + BeautifulSoup4 智能爬取新聞內容，加強反反爬蟲機制"""
@@ -705,6 +953,10 @@ class EnhancedStockAnalyzer:
             
             response = self.model.generate_content(prompt)
             
+            # 報告成功使用 API
+            if report_gemini_success:
+                report_gemini_success()
+            
             if response and response.text:
                 # 解析JSON回應
                 try:
@@ -728,6 +980,33 @@ class EnhancedStockAnalyzer:
                 
         except Exception as e:
             logging.error(f"分析新聞情緒失敗: {e}")
+            # 報告錯誤並嘗試切換 Key
+            if report_gemini_error:
+                report_gemini_error(f"分析新聞情緒失敗: {e}")
+                
+            # 嘗試重新初始化 Gemini 以使用新的 Key
+            try:
+                self._setup_gemini()
+                logging.info("已切換到新的 API Key，重新嘗試新聞情緒分析")
+                if self.model:
+                    response = self.model.generate_content(prompt)
+                    if report_gemini_success:
+                        report_gemini_success()
+                    
+                    if response and response.text:
+                        try:
+                            result = json.loads(response.text.strip())
+                            return result
+                        except json.JSONDecodeError:
+                            return {
+                                'sentiment': 'neutral',
+                                'confidence': 5,
+                                'news_intelligence_report': response.text,
+                                'summary': '新聞分析已生成，但格式解析失敗'
+                            }
+            except Exception as retry_error:
+                logging.error(f"重試新聞情緒分析失敗: {retry_error}")
+            
             return {
                 'sentiment': 'neutral',
                 'confidence': 0,
@@ -1212,6 +1491,7 @@ class EnhancedStockAnalyzer:
         try:
             import os
             import json
+            from src.utils import DateTimeEncoder
             
             output_dir = "data/output"
             os.makedirs(output_dir, exist_ok=True)
@@ -1221,7 +1501,7 @@ class EnhancedStockAnalyzer:
             filepath = os.path.join(output_dir, filename)
             
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(results, f, ensure_ascii=False, indent=2, default=str)
+                json.dump(results, f, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
             
             logging.info(f"分析結果已保存到: {filepath}")
             return filepath
@@ -1242,12 +1522,28 @@ class ValueInvestmentAgent:
         self.env_vars = load_env_variables()
         self.logger = logging.getLogger(__name__)
         
-        # 設置 Gemini AI
+        # 設置 Gemini AI - 使用 Key 管理器
+        self._setup_agent_gemini()
+    
+    def _setup_agent_gemini(self):
+        """為 Agent 設置 Gemini AI"""
         try:
-            genai.configure(api_key=self.env_vars['gemini_api_key'])
+            if get_agent_gemini_key:
+                # 為此代理人獲取專用的 API Key
+                api_key = get_agent_gemini_key(self.name)
+                if not api_key:
+                    raise ValueError(f"{self.name} 無法獲取有效的 Gemini API Key")
+            else:
+                # 回退到環境變數
+                api_key = self.env_vars['gemini_api_key']
+                
+            genai.configure(api_key=api_key)
             self.llm = genai.GenerativeModel(GEMINI_SETTINGS['model'])
+            self.logger.info(f"{self.name} Gemini AI 初始化成功，使用專用 API Key")
         except Exception as e:
-            self.logger.error(f"初始化 Gemini AI 失敗: {e}")
+            self.logger.error(f"{self.name} 初始化 Gemini AI 失敗: {e}")
+            if report_gemini_error:
+                report_gemini_error(f"{self.name} 初始化失敗: {e}", self.name)
             self.llm = None
     
     def analyze(self, stock_data: Dict, context: str = "", round_type: str = "initial") -> Dict[str, Any]:
@@ -1268,6 +1564,10 @@ class ValueInvestmentAgent:
             response = self.llm.generate_content(prompt)
             analysis_text = response.text
             
+            # 報告成功使用 API（代理人特定）
+            if report_gemini_success:
+                report_gemini_success(self.name)
+            
             # 解析分析結果
             parsed_result = self._parse_analysis_result(analysis_text)
             parsed_result['agent'] = self.name
@@ -1278,6 +1578,30 @@ class ValueInvestmentAgent:
                 
         except Exception as e:
             self.logger.error(f"{self.name} 分析失敗: {e}")
+            # 報告錯誤並嘗試切換 Key（代理人特定）
+            if report_gemini_error:
+                report_gemini_error(f"{self.name} 分析失敗: {e}", self.name)
+                
+            # 嘗試重新初始化 Gemini 以使用新的 Key
+            try:
+                self._setup_agent_gemini()
+                self.logger.info(f"{self.name} 已切換到新的 API Key，重新嘗試分析")
+                if self.llm:
+                    response = self.llm.generate_content(prompt)
+                    if report_gemini_success:
+                        report_gemini_success(self.name)
+                    analysis_text = response.text
+                    
+                    # 解析分析結果
+                    parsed_result = self._parse_analysis_result(analysis_text)
+                    parsed_result['agent'] = self.name
+                    parsed_result['role'] = self.role
+                    parsed_result['timestamp'] = datetime.now().isoformat()
+                    
+                    return parsed_result
+            except Exception as retry_error:
+                self.logger.error(f"{self.name} 重試分析失敗: {retry_error}")
+            
             return {
                 'agent': self.name,
                 'analysis': f"分析過程中發生錯誤: {str(e)}",

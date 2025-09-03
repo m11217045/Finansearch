@@ -11,6 +11,20 @@ from typing import Dict, List, Any, Optional
 import json
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    """自定義 JSON 編碼器，處理 datetime 物件"""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, pd.Timestamp):
+            return obj.isoformat()
+        elif isinstance(obj, np.datetime64):
+            return pd.Timestamp(obj).isoformat()
+        elif hasattr(obj, 'isoformat'):  # 其他有 isoformat 方法的日期時間物件
+            return obj.isoformat()
+        return super().default(obj)
+
+
 def setup_logging(log_level: str = "INFO") -> None:
     """設置日誌記錄"""
     logging.basicConfig(
@@ -28,8 +42,21 @@ def load_env_variables() -> Dict[str, str]:
     from dotenv import load_dotenv
     load_dotenv()
     
+    # 首先嘗試載入主要的 GEMINI_API_KEY
+    gemini_key = os.getenv('GEMINI_API_KEY')
+    
+    # 如果主要 key 不存在，嘗試載入第一個編號 key
+    if not gemini_key:
+        gemini_key = os.getenv('GEMINI_API_KEY_1')
+        if gemini_key:
+            logging.info("使用 GEMINI_API_KEY_1 作為主要 API Key")
+    
+    # 如果仍然沒有 key，記錄警告
+    if not gemini_key:
+        logging.warning("未找到任何 Gemini API Key，請檢查 .env 檔案設定")
+    
     return {
-        'gemini_api_key': os.getenv('GEMINI_API_KEY'),
+        'gemini_api_key': gemini_key,
         'debug': os.getenv('DEBUG', 'False').lower() == 'true',
         'max_stocks': int(os.getenv('MAX_STOCKS_TO_ANALYZE', '10'))
     }

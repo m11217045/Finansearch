@@ -145,11 +145,37 @@ def setup_sidebar():
     env_vars = load_env_variables()
     gemini_key = env_vars.get('gemini_api_key')
     
-    if not gemini_key or gemini_key == 'your_gemini_api_key_here':
-        st.sidebar.error("⚠️ 請設置 Gemini API Key")
-        st.sidebar.info("請在 .env 檔案中設置 GEMINI_API_KEY")
-    else:
-        st.sidebar.success("✅ Gemini API 已設置")
+    # 檢查多 API Key 系統狀態
+    try:
+        from src.gemini_key_manager import get_gemini_keys_status, get_current_gemini_key
+        key_status = get_gemini_keys_status()
+        available_keys = key_status.get('total_keys', 0)
+        
+        if available_keys > 0:
+            st.sidebar.success(f"✅ Gemini API 已設置 ({available_keys} 個 Key)")
+            
+            # 顯示 Key 管理器狀態
+            with st.sidebar.expander("🔑 API Key 狀態"):
+                for key_info in key_status.get('keys_status', []):
+                    status_icon = "🔴" if key_info.get('is_blocked') else "🟢"
+                    current_icon = "👉" if key_info.get('is_current') else "  "
+                    st.write(f"{current_icon} {status_icon} Key {key_info['index']}: {key_info['request_count']} 次請求")
+                    
+                    # 顯示分配的代理人
+                    if key_info.get('assigned_agents'):
+                        agents_text = ", ".join(key_info['assigned_agents'])
+                        st.caption(f"   分配給: {agents_text}")
+        else:
+            st.sidebar.error("⚠️ 請設置 Gemini API Key")
+            st.sidebar.info("請在 .env 檔案中設置 GEMINI_API_KEY 或 GEMINI_API_KEY_1 到 GEMINI_API_KEY_5")
+            
+    except Exception as e:
+        # 回退到原有檢查
+        if not gemini_key or gemini_key == 'your_gemini_api_key_here':
+            st.sidebar.error("⚠️ 請設置 Gemini API Key")
+            st.sidebar.info("請在 .env 檔案中設置 GEMINI_API_KEY")
+        else:
+            st.sidebar.success("✅ Gemini API 已設置")
     
     # 篩選參數設置
     st.sidebar.markdown("## 📋 篩選標準")
