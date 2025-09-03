@@ -1,5 +1,5 @@
 """
-增強版分析模組 - 整合新聞、情緒分析和綜合判斷
+增強版分析模組 - 整合新聞、情緒分析、多代理人辯論和綜合判斷
 """
 
 import google.generativeai as genai
@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import yfinance as yf
 from bs4 import BeautifulSoup
-from config.settings import GEMINI_SETTINGS, API_SETTINGS, NEWS_SETTINGS
+from config.settings import GEMINI_SETTINGS, API_SETTINGS, NEWS_SETTINGS, MULTI_AGENT_SETTINGS
 from src.utils import load_env_variables, retry_on_failure
 
 
@@ -798,7 +798,7 @@ class EnhancedStockAnalyzer:
     def analyze_stock_comprehensive(self, stock_data: Dict) -> Dict[str, Any]:
         """執行股票的綜合分析"""
         try:
-            ticker = stock_data.get('ticker', 'Unknown')
+            ticker = stock_data.get('symbol', 'Unknown')
             logging.info(f"開始綜合分析 {ticker}...")
             
             # 1. 獲取新聞數據
@@ -832,15 +832,15 @@ class EnhancedStockAnalyzer:
             return comprehensive_report
             
         except Exception as e:
-            logging.error(f"綜合分析 {stock_data.get('ticker', 'Unknown')} 失敗: {e}")
-            return {'error': str(e), 'ticker': stock_data.get('ticker', 'Unknown')}
+            logging.error(f"綜合分析 {stock_data.get('symbol', 'Unknown')} 失敗: {e}")
+            return {'error': str(e), 'ticker': stock_data.get('symbol', 'Unknown')}
 
     def generate_comprehensive_report(self, stock_data: Dict, news_data: List[Dict], 
                                     sentiment_data: Dict, news_sentiment: Dict) -> Dict[str, Any]:
         """生成綜合分析報告"""
         try:
-            ticker = stock_data.get('ticker', 'Unknown')
-            company_name = stock_data.get('company_name', 'Unknown Company')
+            ticker = stock_data.get('symbol', 'Unknown')
+            company_name = stock_data.get('name', 'Unknown Company')
             
             # 基本面評分
             fundamental_score = self._calculate_fundamental_score(stock_data)
@@ -933,7 +933,7 @@ class EnhancedStockAnalyzer:
             
         except Exception as e:
             logging.error(f"生成綜合報告失敗: {e}")
-            return {'error': str(e), 'ticker': stock_data.get('ticker', 'Unknown')}
+            return {'error': str(e), 'ticker': stock_data.get('symbol', 'Unknown')}
 
     def _calculate_fundamental_score(self, stock_data: Dict) -> float:
         """計算基本面評分 (0-100)"""
@@ -1151,18 +1151,35 @@ class EnhancedStockAnalyzer:
         else:
             return "低風險"
 
-    def batch_analyze_stocks(self, stock_list: List[Dict], max_analysis: int = 10) -> Dict[str, Any]:
+    def batch_analyze_stocks(self, stock_list: List[Dict], max_analysis: int = 10, include_debate: bool = None) -> Dict[str, Any]:
         """批量分析股票"""
         results = {}
         successful_analyses = 0
         
+        # 如果沒有指定 include_debate，使用實例的設定
+        if include_debate is None:
+            include_debate = getattr(self, 'enable_debate', False)
+        
         for i, stock_data in enumerate(stock_list[:max_analysis]):
-            ticker = stock_data.get('ticker', f'Unknown_{i}')
+            ticker = stock_data.get('symbol', f'Unknown_{i}')
             
             try:
-                logging.info(f"分析 {ticker} ({i+1}/{min(len(stock_list), max_analysis)})")
+                if include_debate:
+                    logging.info(f"多代理人辯論分析 {ticker} ({i+1}/{min(len(stock_list), max_analysis)})")
+                else:
+                    logging.info(f"分析 {ticker} ({i+1}/{min(len(stock_list), max_analysis)})")
                 
-                result = self.analyze_stock_comprehensive(stock_data)
+                # 調用綜合分析方法，傳遞 include_debate 參數
+                if hasattr(self, 'analyze_stock_comprehensive'):
+                    # 如果是 EnhancedStockAnalyzerWithDebate 類別，使用新的方法簽名
+                    if hasattr(self, 'conduct_multi_agent_debate'):
+                        result = self.analyze_stock_comprehensive(stock_data, include_debate=include_debate)
+                    else:
+                        # 如果是原始的 EnhancedStockAnalyzer，使用原有的方法簽名
+                        result = self.analyze_stock_comprehensive(stock_data)
+                else:
+                    result = {'error': 'analyze_stock_comprehensive 方法不存在', 'ticker': ticker}
+                
                 results[ticker] = result
                 
                 if 'error' not in result:
@@ -1170,7 +1187,8 @@ class EnhancedStockAnalyzer:
                 
                 # 添加延遲以避免API限制
                 if i < len(stock_list) - 1:  # 不是最後一個
-                    time.sleep(3)  # 3秒延遲
+                    delay_time = 5 if include_debate else 3  # 多代理人分析需要更長延遲
+                    time.sleep(delay_time)
                     
             except Exception as e:
                 logging.error(f"分析 {ticker} 時發生錯誤: {e}")
@@ -1183,6 +1201,7 @@ class EnhancedStockAnalyzer:
             'successful_analyses': successful_analyses,
             'failed_analyses': min(len(stock_list), max_analysis) - successful_analyses,
             'analysis_results': results,
+            'include_debate': include_debate,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -1198,12 +1217,718 @@ class EnhancedStockAnalyzer:
             os.makedirs(output_dir, exist_ok=True)
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{output_dir}/{filename_prefix}_{timestamp}.json"
+            filename = f"{filename_prefix}_{timestamp}.json"
+            filepath = os.path.join(output_dir, filename)
             
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(results, f, ensure_ascii=False, indent=2)
-                
-            logging.info(f"分析結果已保存到 {filename}")
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(results, f, ensure_ascii=False, indent=2, default=str)
+            
+            logging.info(f"分析結果已保存到: {filepath}")
+            return filepath
             
         except Exception as e:
             logging.error(f"保存分析結果失敗: {e}")
+            return None
+
+
+class ValueInvestmentAgent:
+    """價值投資代理人 - 整合到增強分析器中"""
+    
+    def __init__(self, name: str, role: str, expertise: str, investment_style: str):
+        self.name = name
+        self.role = role
+        self.expertise = expertise
+        self.investment_style = investment_style
+        self.env_vars = load_env_variables()
+        self.logger = logging.getLogger(__name__)
+        
+        # 設置 Gemini AI
+        try:
+            genai.configure(api_key=self.env_vars['gemini_api_key'])
+            self.llm = genai.GenerativeModel(GEMINI_SETTINGS['model'])
+        except Exception as e:
+            self.logger.error(f"初始化 Gemini AI 失敗: {e}")
+            self.llm = None
+    
+    def analyze(self, stock_data: Dict, context: str = "", round_type: str = "initial") -> Dict[str, Any]:
+        """分析股票數據並提供觀點"""
+        if not self.llm:
+            return {
+                'agent': self.name,
+                'analysis': "AI 模型初始化失敗，無法進行分析",
+                'recommendation': "HOLD",
+                'confidence': 0,
+                'target_price': None,
+                'risk_level': "UNKNOWN"
+            }
+        
+        prompt = self._create_analysis_prompt(stock_data, context, round_type)
+        
+        try:
+            response = self.llm.generate_content(prompt)
+            analysis_text = response.text
+            
+            # 解析分析結果
+            parsed_result = self._parse_analysis_result(analysis_text)
+            parsed_result['agent'] = self.name
+            parsed_result['role'] = self.role
+            parsed_result['timestamp'] = datetime.now().isoformat()
+            
+            return parsed_result
+                
+        except Exception as e:
+            self.logger.error(f"{self.name} 分析失敗: {e}")
+            return {
+                'agent': self.name,
+                'analysis': f"分析過程中發生錯誤: {str(e)}",
+                'recommendation': "HOLD",
+                'confidence': 0,
+                'target_price': None,
+                'risk_level': "HIGH"
+            }
+    
+    def _create_analysis_prompt(self, stock_data: Dict, context: str, round_type: str) -> str:
+        """創建分析提示詞"""
+        base_prompt = f"""
+你是一位專業的{self.role}，專精於{self.expertise}，投資風格為{self.investment_style}。
+
+股票基本資訊：
+- 股票代碼: {stock_data.get('symbol', 'N/A')}
+- 公司名稱: {stock_data.get('company_name', 'N/A')}
+
+財務指標：
+- 本益比 (P/E): {stock_data.get('pe_ratio', 'N/A')}
+- 市淨率 (P/B): {stock_data.get('pb_ratio', 'N/A')}
+- 股息殖利率: {stock_data.get('dividend_yield', 'N/A')}%
+- 負債權益比: {stock_data.get('debt_to_equity', 'N/A')}
+- 自由現金流: {stock_data.get('free_cash_flow', 'N/A')}
+- ROE: {stock_data.get('roe', 'N/A')}%
+- ROA: {stock_data.get('roa', 'N/A')}%
+
+價格資訊：
+- 當前股價: ${stock_data.get('current_price', 'N/A')}
+- 52週高點: ${stock_data.get('fifty_two_week_high', 'N/A')}
+- 52週低點: ${stock_data.get('fifty_two_week_low', 'N/A')}
+
+{context}
+"""
+        
+        if round_type == "initial":
+            task_prompt = f"""
+請從{self.investment_style}的角度進行首次分析，提供：
+
+1. 詳細分析（200-300字）
+2. 投資建議：BUY/HOLD/SELL
+3. 信心程度：1-10分
+4. 目標價格區間（如適用）
+5. 風險等級：LOW/MEDIUM/HIGH
+6. 主要論點（3-5點）
+
+請以 JSON 格式回應：
+{{
+    "analysis": "詳細分析內容",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "key_points": ["論點1", "論點2", "論點3"]
+}}
+"""
+        else:
+            task_prompt = f"""
+基於其他專家的分析，請重新評估並提供辯論觀點：
+
+1. 針對其他專家意見的反駁或支持
+2. 補強或修正你的原始觀點
+3. 更新後的投資建議和理由
+4. 對爭議點的明確立場
+
+請以 JSON 格式回應：
+{{
+    "analysis": "辯論分析內容",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "rebuttal_points": ["反駁點1", "反駁點2"],
+    "support_points": ["支持點1", "支持點2"]
+}}
+"""
+        
+        return base_prompt + task_prompt
+    
+    def _parse_analysis_result(self, analysis_text: str) -> Dict[str, Any]:
+        """解析 AI 分析結果"""
+        try:
+            # 嘗試從文本中提取 JSON
+            start_idx = analysis_text.find('{')
+            end_idx = analysis_text.rfind('}') + 1
+            
+            if start_idx != -1 and end_idx != -1:
+                json_str = analysis_text[start_idx:end_idx]
+                result = json.loads(json_str)
+                
+                # 確保必要欄位存在
+                if 'analysis' not in result:
+                    result['analysis'] = analysis_text
+                if 'recommendation' not in result:
+                    result['recommendation'] = 'HOLD'
+                if 'confidence' not in result:
+                    result['confidence'] = 5
+                if 'risk_level' not in result:
+                    result['risk_level'] = 'MEDIUM'
+                
+                return result
+            else:
+                # 如果無法解析 JSON，則手動提取關鍵資訊
+                return self._extract_key_info(analysis_text)
+                
+        except json.JSONDecodeError:
+            return self._extract_key_info(analysis_text)
+    
+    def _extract_key_info(self, text: str) -> Dict[str, Any]:
+        """從文本中提取關鍵資訊"""
+        text_upper = text.upper()
+        
+        # 提取投資建議
+        if 'BUY' in text_upper or '買入' in text:
+            recommendation = 'BUY'
+        elif 'SELL' in text_upper or '賣出' in text:
+            recommendation = 'SELL'
+        else:
+            recommendation = 'HOLD'
+        
+        # 提取風險等級
+        if 'HIGH' in text_upper or '高風險' in text:
+            risk_level = 'HIGH'
+        elif 'LOW' in text_upper or '低風險' in text:
+            risk_level = 'LOW'
+        else:
+            risk_level = 'MEDIUM'
+        
+        return {
+            'analysis': text,
+            'recommendation': recommendation,
+            'confidence': 5,
+            'target_price_low': None,
+            'target_price_high': None,
+            'risk_level': risk_level,
+            'key_points': []
+        }
+
+
+# 新增多代理人辯論功能到增強分析器
+class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
+    """增強版股票分析器 - 包含多代理人辯論功能"""
+    
+    def __init__(self, enable_debate: bool = None, status_manager=None):
+        super().__init__()
+        
+        # 設置狀態管理器
+        self.status_manager = status_manager
+        
+        # 判斷是否啟用多代理人辯論
+        if enable_debate is None:
+            enable_debate = MULTI_AGENT_SETTINGS.get('enable_debate', True)
+        self.enable_debate = enable_debate
+        
+        # 如果啟用辯論，初始化多代理人系統
+        if self.enable_debate:
+            try:
+                self.agents = self._initialize_agents()
+                logging.info("多代理人辯論系統初始化成功")
+            except Exception as e:
+                logging.error(f"多代理人辯論系統初始化失敗: {e}")
+                self.agents = []
+                self.enable_debate = False
+        else:
+            self.agents = []
+    
+    def _initialize_agents(self) -> List[ValueInvestmentAgent]:
+        """初始化代理人團隊"""
+        agents = [
+            ValueInvestmentAgent(
+                name="巴菲特派價值投資師",
+                role="長期價值投資分析師",
+                expertise="基本面分析、護城河評估、長期價值挖掘",
+                investment_style="長期持有、尋找具有競爭優勢的優質企業"
+            ),
+            ValueInvestmentAgent(
+                name="葛拉漢派防御型投資師",
+                role="防御型價值投資分析師", 
+                expertise="安全邊際評估、財務穩健性分析、風險控制",
+                investment_style="重視安全邊際、偏好低估值穩健企業"
+            ),
+            ValueInvestmentAgent(
+                name="成長價值投資師",
+                role="成長價值投資分析師",
+                expertise="成長性評估、未來盈利預測、估值模型",
+                investment_style="尋找被低估的成長股、關注未來潛力"
+            ),
+            ValueInvestmentAgent(
+                name="市場時機分析師",
+                role="市場週期分析師",
+                expertise="市場時機判斷、技術面分析、資金流向",
+                investment_style="關注市場週期、適時進出場"
+            ),
+            ValueInvestmentAgent(
+                name="風險管理專家",
+                role="投資風險評估師",
+                expertise="風險識別、投組管理、資產配置",
+                investment_style="嚴格風控、分散投資、資產保護"
+            )
+        ]
+        return agents
+    
+    def _map_agent_to_key(self, agent_name: str) -> str:
+        """將代理人名稱映射到狀態管理器的鍵值"""
+        agent_mapping = {
+            '巴菲特派價值投資師': 'fundamentals_analyst',
+            '葛拉漢派防御型投資師': 'conservative_debator',
+            '成長價值投資師': 'bull_researcher',
+            '市場時機分析師': 'market_analyst',
+            '風險管理專家': 'risk_manager'
+        }
+        return agent_mapping.get(agent_name, 'research_manager')
+    
+    def analyze_stock_comprehensive(self, stock_data: Dict, include_debate: bool = None) -> Dict[str, Any]:
+        """執行股票的綜合分析，包含多代理人辯論（如果啟用）"""
+        stock_symbol = stock_data.get('symbol', 'Unknown')
+        
+        # 更新狀態：開始綜合分析
+        if self.status_manager:
+            self.status_manager.update_status(
+                agent='market_analyst',
+                step='綜合分析',
+                message=f'正在為 {stock_symbol} 執行綜合分析...',
+                progress=10
+            )
+        
+        # 先執行原有的綜合分析
+        base_analysis = super().analyze_stock_comprehensive(stock_data)
+        
+        # 如果啟用辯論且沒有錯誤，則進行多代理人分析
+        if include_debate is None:
+            include_debate = self.enable_debate
+        
+        if include_debate and self.enable_debate and 'error' not in base_analysis:
+            try:
+                logging.info(f"開始對 {stock_data.get('symbol')} 進行多代理人辯論分析")
+                
+                # 更新狀態：開始多代理人辯論
+                if self.status_manager:
+                    self.status_manager.update_status(
+                        agent='research_manager',
+                        step='多代理人辯論',
+                        message=f'正在召集專家團隊分析 {stock_symbol}...',
+                        progress=50
+                    )
+                
+                debate_result = self.conduct_multi_agent_debate(stock_data)
+                
+                # 整合辯論結果到基礎分析中
+                base_analysis['multi_agent_debate'] = debate_result
+                base_analysis['integrated_recommendation'] = self._integrate_analyses(
+                    base_analysis, debate_result
+                )
+                
+                # 更新狀態：完成分析
+                if self.status_manager:
+                    self.status_manager.update_status(
+                        agent='research_manager',
+                        step='整合結果',
+                        message=f'{stock_symbol} 的綜合分析已完成',
+                        progress=90
+                    )
+                
+            except Exception as e:
+                logging.error(f"多代理人辯論分析失敗: {e}")
+                base_analysis['multi_agent_debate'] = {'error': str(e)}
+        
+        return base_analysis
+    
+    def conduct_multi_agent_debate(self, stock_data: Dict, rounds: int = None) -> Dict[str, Any]:
+        """進行多代理人辯論分析"""
+        if rounds is None:
+            rounds = MULTI_AGENT_SETTINGS.get('debate_rounds', 2)
+        
+        stock_symbol = stock_data.get('symbol', 'Unknown')
+        
+        debate_result = {
+            'symbol': stock_data.get('symbol'),
+            'company_name': stock_data.get('company_name'),
+            'agents_analysis': {},
+            'debate_rounds': [],
+            'final_consensus': {},
+            'voting_results': {},
+            'debate_summary': "",
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # 第一輪：各代理人獨立分析
+        logging.info("第一輪：各代理人獨立分析")
+        
+        if self.status_manager:
+            self.status_manager.update_status(
+                agent='research_manager',
+                step='專家獨立分析',
+                message=f'各領域專家正在獨立分析 {stock_symbol}...',
+                progress=55
+            )
+        
+        for i, agent in enumerate(self.agents):
+            try:
+                # 更新當前分析的專家
+                if self.status_manager:
+                    agent_key = agent.name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
+                    self.status_manager.update_status(
+                        agent=self._map_agent_to_key(agent.name),
+                        step=f'專家分析 ({i+1}/{len(self.agents)})',
+                        message=f'{agent.name} 正在分析 {stock_symbol}...',
+                        progress=55 + (i * 5)
+                    )
+                
+                analysis = agent.analyze(stock_data, "", "initial")
+                debate_result['agents_analysis'][agent.name] = analysis
+                time.sleep(GEMINI_SETTINGS.get('rate_limit_delay', 3))  # API 限制
+            except Exception as e:
+                logging.error(f"{agent.name} 分析失敗: {e}")
+        
+        # 進行辯論輪次
+        context = self._build_context_from_analyses(debate_result['agents_analysis'])
+        
+        for round_num in range(1, rounds + 1):
+            logging.info(f"第{round_num + 1}輪：辯論與反駁")
+            
+            if self.status_manager:
+                self.status_manager.update_status(
+                    agent='research_manager',
+                    step=f'辯論輪次 {round_num}',
+                    message=f'專家團隊正在進行第 {round_num} 輪辯論...',
+                    progress=70 + (round_num * 5)
+                )
+            
+            round_result = self._conduct_debate_round(stock_data, context, round_num)
+            debate_result['debate_rounds'].append(round_result)
+            context = self._update_context(context, round_result)
+        
+        # 統計投票結果
+        if self.status_manager:
+            self.status_manager.update_status(
+                agent='research_manager',
+                step='統計投票結果',
+                message=f'正在統計專家投票結果...',
+                progress=85
+            )
+        
+        debate_result['voting_results'] = self._calculate_voting_results(
+            debate_result['agents_analysis'], debate_result['debate_rounds']
+        )
+        
+        # 生成最終共識
+        debate_result['final_consensus'] = self._generate_final_consensus(
+            stock_data, debate_result['agents_analysis'], 
+            debate_result['debate_rounds'], debate_result['voting_results']
+        )
+        
+        # 生成辯論摘要
+        debate_result['debate_summary'] = self._generate_debate_summary(debate_result)
+        
+        return debate_result
+    
+    def _build_context_from_analyses(self, analyses: Dict) -> str:
+        """從各代理人分析中建構背景資訊"""
+        context = "=== 各專家的初步分析觀點 ===\n\n"
+        for agent_name, analysis_data in analyses.items():
+            context += f"【{agent_name}】({analysis_data.get('role', 'N/A')}):\n"
+            context += f"投資建議: {analysis_data.get('recommendation', 'N/A')}\n"
+            context += f"信心程度: {analysis_data.get('confidence', 'N/A')}/10\n"
+            context += f"風險等級: {analysis_data.get('risk_level', 'N/A')}\n"
+            context += f"分析要點: {analysis_data.get('analysis', 'N/A')[:200]}...\n\n"
+        return context
+    
+    def _conduct_debate_round(self, stock_data: Dict, context: str, round_num: int) -> Dict:
+        """進行一輪辯論"""
+        round_result = {
+            'round': round_num,
+            'timestamp': datetime.now().isoformat(),
+            'agent_responses': {}
+        }
+        
+        debate_context = f"""
+{context}
+
+=== 第{round_num}輪辯論要求 ===
+基於上述各專家的分析意見，請重新評估你的觀點並提供辯論回應：
+
+1. 指出其他專家分析中你認為有問題或值得商榷的地方
+2. 補強你原本分析中的論點
+3. 基於討論調整你的投資建議（如果需要）
+4. 提供具體的數據和邏輯支持你的觀點
+5. 對主要爭議點表達明確立場
+
+請保持專業理性，並基於價值投資原則進行分析。
+"""
+        
+        for agent in self.agents:
+            try:
+                response = agent.analyze(stock_data, debate_context, "debate")
+                round_result['agent_responses'][agent.name] = response
+                time.sleep(GEMINI_SETTINGS.get('rate_limit_delay', 3))
+            except Exception as e:
+                logging.error(f"{agent.name} 第{round_num}輪辯論失敗: {e}")
+        
+        return round_result
+    
+    def _update_context(self, current_context: str, round_result: Dict) -> str:
+        """更新辯論背景資訊"""
+        new_context = current_context + f"\n\n=== 第{round_result['round']}輪辯論結果 ===\n"
+        for agent_name, response in round_result['agent_responses'].items():
+            recommendation = response.get('recommendation', 'N/A')
+            confidence = response.get('confidence', 'N/A')
+            new_context += f"\n【{agent_name}】更新觀點：{recommendation} (信心度: {confidence}/10)\n"
+            new_context += f"主要論點: {response.get('analysis', 'N/A')[:150]}...\n"
+        return new_context
+    
+    def _calculate_voting_results(self, initial_analyses: Dict, debate_rounds: List) -> Dict:
+        """計算投票結果"""
+        voting_data = {
+            'buy_votes': 0,
+            'hold_votes': 0,
+            'sell_votes': 0,
+            'initial_votes': {'BUY': 0, 'HOLD': 0, 'SELL': 0},
+            'final_votes': {'BUY': 0, 'HOLD': 0, 'SELL': 0},
+            'confidence_scores': {},
+            'consensus_level': 0,
+            'agent_final_positions': {}
+        }
+        
+        # 統計初始投票
+        for agent_name, analysis in initial_analyses.items():
+            recommendation = analysis.get('recommendation', 'HOLD').upper()
+            if recommendation in voting_data['initial_votes']:
+                voting_data['initial_votes'][recommendation] += 1
+        
+        # 統計最終投票（取最後一輪的結果或初始分析）
+        final_positions = {}
+        
+        if debate_rounds:
+            # 使用最後一輪辯論結果
+            final_round = debate_rounds[-1]
+            for agent_name, response in final_round.get('agent_responses', {}).items():
+                recommendation = response.get('recommendation', 'HOLD').upper()
+                confidence = response.get('confidence', 5)
+                
+                final_positions[agent_name] = {
+                    'recommendation': recommendation,
+                    'confidence': confidence
+                }
+        else:
+            # 如果沒有辯論輪次，使用初始分析
+            for agent_name, analysis in initial_analyses.items():
+                recommendation = analysis.get('recommendation', 'HOLD').upper()
+                confidence = analysis.get('confidence', 5)
+                
+                final_positions[agent_name] = {
+                    'recommendation': recommendation,
+                    'confidence': confidence
+                }
+        
+        # 統計最終票數
+        for agent_name, position in final_positions.items():
+            recommendation = position['recommendation']
+            confidence = position['confidence']
+            
+            if recommendation in voting_data['final_votes']:
+                voting_data['final_votes'][recommendation] += 1
+                
+            # 設置標準化的票數欄位（用於前端顯示）
+            if recommendation == 'BUY':
+                voting_data['buy_votes'] += 1
+            elif recommendation == 'HOLD':
+                voting_data['hold_votes'] += 1
+            elif recommendation == 'SELL':
+                voting_data['sell_votes'] += 1
+                
+            voting_data['confidence_scores'][agent_name] = confidence
+            voting_data['agent_final_positions'][agent_name] = position
+        
+        # 計算共識程度
+        total_agents = len(self.agents)
+        max_votes = max(voting_data['final_votes'].values()) if voting_data['final_votes'] else 0
+        voting_data['consensus_level'] = max_votes / total_agents if total_agents > 0 else 0
+        
+        return voting_data
+    
+    def _generate_final_consensus(self, stock_data: Dict, analyses: Dict, 
+                                debate_rounds: List, voting_results: Dict) -> Dict:
+        """生成最終投資共識"""
+        # 找出最多票的建議
+        final_votes = voting_results['final_votes']
+        consensus_recommendation = max(final_votes, key=final_votes.get)
+        
+        # 計算平均信心度
+        confidence_scores = voting_results['confidence_scores']
+        avg_confidence = sum(confidence_scores.values()) / len(confidence_scores) if confidence_scores else 5
+        
+        # 收集支持共識的主要論點
+        supporting_points = []
+        opposing_points = []
+        
+        if debate_rounds:
+            final_round = debate_rounds[-1]
+            for agent_name, response in final_round['agent_responses'].items():
+                if response.get('recommendation') == consensus_recommendation:
+                    key_points = response.get('key_points', [])
+                    supporting_points.extend(key_points)
+                else:
+                    key_points = response.get('key_points', [])
+                    opposing_points.extend(key_points)
+        
+        return {
+            'final_recommendation': consensus_recommendation,
+            'consensus_level': voting_results['consensus_level'],
+            'average_confidence': round(avg_confidence, 1),
+            'vote_distribution': final_votes,
+            'supporting_points': supporting_points[:5],  # 取前5個支持論點
+            'opposing_points': opposing_points[:3],      # 取前3個反對論點
+            'risk_assessment': self._assess_overall_risk_from_debate(analyses, debate_rounds),
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    def _assess_overall_risk_from_debate(self, analyses: Dict, debate_rounds: List) -> str:
+        """評估整體風險等級"""
+        risk_scores = {'LOW': 1, 'MEDIUM': 2, 'HIGH': 3}
+        total_risk = 0
+        count = 0
+        
+        # 收集所有風險評估
+        for analysis in analyses.values():
+            risk_level = analysis.get('risk_level', 'MEDIUM')
+            total_risk += risk_scores.get(risk_level, 2)
+            count += 1
+        
+        if debate_rounds:
+            final_round = debate_rounds[-1]
+            for response in final_round['agent_responses'].values():
+                risk_level = response.get('risk_level', 'MEDIUM')
+                total_risk += risk_scores.get(risk_level, 2)
+                count += 1
+        
+        if count == 0:
+            return 'MEDIUM'
+        
+        avg_risk = total_risk / count
+        if avg_risk <= 1.5:
+            return 'LOW'
+        elif avg_risk <= 2.5:
+            return 'MEDIUM'
+        else:
+            return 'HIGH'
+    
+    def _generate_debate_summary(self, debate_result: Dict) -> str:
+        """生成辯論摘要"""
+        summary_parts = []
+        
+        # 基本資訊
+        symbol = debate_result['symbol']
+        final_rec = debate_result['final_consensus']['final_recommendation']
+        consensus_level = debate_result['final_consensus']['consensus_level']
+        
+        summary_parts.append(f"股票 {symbol} 多代理人分析結果：")
+        summary_parts.append(f"最終建議：{final_rec}")
+        summary_parts.append(f"專家共識度：{consensus_level:.1%}")
+        
+        # 投票分佈
+        vote_dist = debate_result['final_consensus']['vote_distribution']
+        summary_parts.append(f"投票分佈：買入 {vote_dist['BUY']} 票，持有 {vote_dist['HOLD']} 票，賣出 {vote_dist['SELL']} 票")
+        
+        # 主要論點
+        supporting_points = debate_result['final_consensus']['supporting_points']
+        if supporting_points:
+            summary_parts.append("主要支持論點：")
+            for point in supporting_points[:3]:
+                summary_parts.append(f"• {point}")
+        
+        # 風險評估
+        risk_level = debate_result['final_consensus']['risk_assessment']
+        summary_parts.append(f"整體風險等級：{risk_level}")
+        
+        return "\n".join(summary_parts)
+    
+    def _integrate_analyses(self, base_analysis: Dict, debate_analysis: Dict) -> Dict[str, Any]:
+        """整合基礎分析和多代理人辯論結果"""
+        integrated_result = {
+            'final_recommendation': 'HOLD',
+            'confidence_level': 5,
+            'risk_assessment': 'MEDIUM',
+            'integration_method': 'weighted_consensus',
+            'reasoning': [],
+            'target_price_range': {},
+            'investment_horizon': 'MEDIUM_TERM',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        try:
+            # 從基礎分析提取建議
+            base_rec = base_analysis.get('investment_recommendation', 'HOLD')
+            base_score = base_analysis.get('overall_score', 50)
+            
+            # 從辯論分析提取建議
+            final_consensus = debate_analysis.get('final_consensus', {})
+            debate_rec = final_consensus.get('final_recommendation', 'HOLD')
+            consensus_level = final_consensus.get('consensus_level', 0.5)
+            avg_confidence = final_consensus.get('average_confidence', 5)
+            
+            # 權重設定：如果多代理人共識度高，給予更高權重
+            debate_weight = 0.6 + (consensus_level * 0.3)  # 0.6-0.9
+            base_weight = 1 - debate_weight
+            
+            # 決定最終建議
+            if base_rec == debate_rec:
+                # 如果兩者一致，直接採用
+                integrated_result['final_recommendation'] = debate_rec
+                integrated_result['confidence_level'] = min(10, avg_confidence * 1.2)  # 提高信心度
+                integrated_result['reasoning'] = ['基礎分析與多代理人辯論結果一致']
+            else:
+                # 如果不一致，基於信心度和共識度決定
+                if avg_confidence * consensus_level > base_score * 0.08:  # 標準化比較
+                    integrated_result['final_recommendation'] = debate_rec
+                    integrated_result['reasoning'] = ['多代理人辯論具有較高共識，採用辯論結果']
+                else:
+                    integrated_result['final_recommendation'] = base_rec
+                    integrated_result['reasoning'] = ['基礎分析信心度較高，採用傳統分析結果']
+                
+                integrated_result['confidence_level'] = max(avg_confidence, base_score/10) * 0.9
+            
+            # 風險評估整合
+            base_risk = base_analysis.get('risk_assessment', {}).get('overall_risk', 'MEDIUM')
+            debate_risk = final_consensus.get('risk_assessment', 'MEDIUM')
+            
+            risk_levels = {'LOW': 1, 'MEDIUM': 2, 'HIGH': 3}
+            avg_risk = (risk_levels.get(base_risk, 2) + risk_levels.get(debate_risk, 2)) / 2
+            
+            if avg_risk <= 1.5:
+                integrated_result['risk_assessment'] = 'LOW'
+            elif avg_risk <= 2.5:
+                integrated_result['risk_assessment'] = 'MEDIUM'
+            else:
+                integrated_result['risk_assessment'] = 'HIGH'
+            
+            # 合併理由
+            supporting_points = final_consensus.get('supporting_points', [])
+            integrated_result['reasoning'].extend(supporting_points[:3])  # 取前3個辯論理由
+            
+            # 添加額外資訊
+            integrated_result['consensus_level'] = consensus_level
+            integrated_result['vote_distribution'] = final_consensus.get('vote_distribution', {})
+            integrated_result['base_analysis_score'] = base_score
+            integrated_result['debate_confidence'] = avg_confidence
+            
+        except Exception as e:
+            logging.error(f"整合分析失敗: {e}")
+            integrated_result['error'] = str(e)
+        
+        return integrated_result

@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Tuple, Any
 from config.settings import SCREENING_CRITERIA
 from src.utils import format_currency, format_percentage, format_ratio
-from src.enhanced_value_analyzer import EnhancedValueAnalyzer
+from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
 from src.stock_individual_analyzer import StockIndividualAnalyzer
 
 
@@ -19,7 +19,7 @@ class ValueScreener:
     def __init__(self, criteria: Dict[str, float] = None):
         self.criteria = criteria or SCREENING_CRITERIA
         self.screening_results = {}
-        self.enhanced_analyzer = EnhancedValueAnalyzer()
+        self.enhanced_analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=False)
         self.individual_analyzer = StockIndividualAnalyzer()
     
     def enhanced_analysis(self, tickers: List[str], use_enhanced_metrics: bool = True) -> pd.DataFrame:
@@ -36,19 +36,45 @@ class ValueScreener:
         logging.info(f"開始對 {len(tickers)} 支股票進行增強價值投資分析...")
         
         if use_enhanced_metrics:
-            # 使用增強分析器進行全面分析
-            results_df = self.enhanced_analyzer.batch_analyze_stocks(tickers)
+            # 將 tickers 轉換為股票數據字典列表
+            stock_list = [{'ticker': ticker, 'symbol': ticker} for ticker in tickers]
             
-            if not results_df.empty:
-                # 添加傳統價值投資評分以便比較
-                basic_score_df = self.calculate_basic_value_scores(results_df)
+            # 使用增強分析器進行全面分析
+            batch_results = self.enhanced_analyzer.batch_analyze_stocks(stock_list, max_analysis=len(tickers))
+            
+            # 從批量分析結果中提取個別股票結果
+            analysis_results = batch_results.get('analysis_results', {})
+            
+            if analysis_results:
+                # 轉換結果為 DataFrame 格式
+                results_data = []
+                for ticker, result in analysis_results.items():
+                    if 'error' not in result:
+                        # 提取關鍵指標
+                        row_data = {
+                            'ticker': ticker,
+                            'symbol': ticker,
+                            'comprehensive_score': result.get('overall_score', 0),
+                            'investment_grade': result.get('investment_recommendation', 'N/A'),
+                            'fundamental_score': result.get('fundamental_analysis', {}).get('score', 0),
+                            'technical_score': result.get('technical_analysis', {}).get('score', 0),
+                            'sentiment_score': result.get('news_sentiment_analysis', {}).get('score', 0),
+                            'risk_level': result.get('risk_assessment', {}).get('overall_risk', 'MEDIUM')
+                        }
+                        results_data.append(row_data)
                 
-                # 合併結果
-                enhanced_df = pd.merge(results_df, basic_score_df[['ticker', 'basic_value_score']], 
-                                     on='ticker', how='left')
-                
-                logging.info(f"完成增強分析，共 {len(enhanced_df)} 支股票")
-                return enhanced_df
+                if results_data:
+                    results_df = pd.DataFrame(results_data)
+                    
+                    # 添加傳統價值投資評分以便比較
+                    basic_score_df = self.calculate_basic_value_scores(results_df)
+                    
+                    # 合併結果
+                    enhanced_df = pd.merge(results_df, basic_score_df[['ticker', 'basic_value_score']], 
+                                         on='ticker', how='left')
+                    
+                    logging.info(f"完成增強分析，共 {len(enhanced_df)} 支股票")
+                    return enhanced_df
         
         # 如果不使用增強指標或增強分析失敗，回退到基本分析
         logging.info("使用基本分析方法...")
@@ -266,10 +292,11 @@ class ValueScreener:
             
             if result:
                 # 添加價值投資評分以便比較
-                enhanced_result = self.enhanced_analyzer.analyze_stock_comprehensive(ticker)
-                if enhanced_result:
-                    result['value_investment_score'] = enhanced_result.get('comprehensive_score', 0)
-                    result['value_investment_grade'] = enhanced_result.get('investment_grade', 'N/A')
+                stock_data = {'ticker': ticker, 'symbol': ticker}
+                enhanced_result = self.enhanced_analyzer.analyze_stock_comprehensive(stock_data)
+                if enhanced_result and 'error' not in enhanced_result:
+                    result['value_investment_score'] = enhanced_result.get('overall_score', 0)
+                    result['value_investment_grade'] = enhanced_result.get('investment_recommendation', 'N/A')
                 
                 logging.info(f"完成 {ticker} 的個股綜合分析")
                 return result

@@ -26,11 +26,21 @@ API_SETTINGS = {
 
 # Gemini 設定
 GEMINI_SETTINGS = {
-    'model': 'gemini-2.5-pro',  # 使用較便宜的模型
+    'model': 'gemini-2.5-flash',  # 使用較便宜的模型
     'max_tokens': 2048,
     'temperature': 0.3,
     'rate_limit_delay': 3,  # API 請求間隔 (秒)
     'max_retries': 2,       # 減少重試次數以節省配額
+}
+
+# 多代理人辯論系統設定
+MULTI_AGENT_SETTINGS = {
+    'use_openai': False,          # 是否使用 OpenAI API (備選 Gemini)
+    'debate_rounds': 2,           # 辯論輪數
+    'max_agents': 5,              # 最大代理人數量
+    'consensus_threshold': 0.7,   # 共識閾值
+    'debate_timeout': 300,        # 辯論超時時間（秒）
+    'enable_debate': True,        # 是否啟用多代理人辯論
 }
 
 # 新聞和情緒分析設定

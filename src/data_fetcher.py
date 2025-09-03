@@ -216,6 +216,11 @@ class MultiMarketDataFetcher:
         
         return df
     
+    def get_stock_data(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """獲取單一股票的財務數據（公開方法）"""
+        self.rate_limiter.wait_if_needed()
+        return self._get_stock_data(ticker)
+    
     def _get_stock_data(self, ticker: str) -> Optional[Dict[str, Any]]:
         """獲取單一股票的財務數據"""
         try:
@@ -228,6 +233,7 @@ class MultiMarketDataFetcher:
             # 構建股票數據字典
             stock_data = {
                 'symbol': ticker,
+                'ticker': ticker,  # 為了向後兼容
                 'name': info.get('longName', ticker),
                 'sector': info.get('sector', 'Unknown'),
                 'industry': info.get('industry', 'Unknown'),

@@ -10,3 +10,8 @@ openpyxl>=3.1.0
 python-dotenv>=1.0.0
 lxml>=4.9.0
 textblob>=0.17.1
+# 多代理人辯論功能所需套件
+langchain-openai>=0.1.0
+langchain-core>=0.2.0
+langchain-experimental>=0.0.60
+langgraph>=0.1.0

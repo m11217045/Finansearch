@@ -12,8 +12,8 @@ import json
 from src.utils import setup_logging, load_env_variables, create_output_directory, save_dataframe
 from src.data_fetcher import SP500DataFetcher
 from src.screener import ValueScreener
-from src.enhanced_analyzer import EnhancedStockAnalyzer  # 使用增強版分析器
-from config.settings import OUTPUT_SETTINGS
+from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate  # 使用增強版分析器
+from config.settings import OUTPUT_SETTINGS, MULTI_AGENT_SETTINGS
 
 
 def main():
@@ -98,14 +98,24 @@ def main():
         logger.info("-" * 40)
         
         try:
-            analyzer = EnhancedStockAnalyzer()
+            # 啟用多代理人辯論（在命令列版本中預設關閉，可通過設定檔調整）
+            enable_debate = MULTI_AGENT_SETTINGS.get('enable_debate', False)
+            analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=enable_debate)
             
             # 將 DataFrame 轉換為字典列表
             stock_list = screened_data.to_dict('records')
             
-            # 執行綜合分析（包含新聞、情緒、技術面）
-            logger.info("開始執行多維度綜合分析...")
-            analysis_results = analyzer.batch_analyze_stocks(stock_list, max_analysis=min(5, len(screened_data)))
+            # 執行綜合分析（包含新聞、情緒、技術面，以及多代理人辯論）
+            if enable_debate:
+                logger.info("開始執行多代理人辯論分析...")
+            else:
+                logger.info("開始執行多維度綜合分析...")
+            
+            analysis_results = analyzer.batch_analyze_stocks(
+                stock_list, 
+                max_analysis=min(5, len(screened_data)),
+                include_debate=enable_debate
+            )
             
             # 保存分析結果
             analyzer.save_analysis_results(analysis_results, f"{output_dir}/enhanced_analysis")

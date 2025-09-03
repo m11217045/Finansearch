@@ -9,16 +9,19 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
 import os
+import time
 from datetime import datetime
 import logging
 
 # 導入自訂模組
 from src.data_fetcher import SP500DataFetcher, MultiMarketDataFetcher, STOCK_PORTFOLIOS
 from src.screener import ValueScreener
-from src.enhanced_analyzer import EnhancedStockAnalyzer
+from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
 from src.stock_individual_analyzer import StockIndividualAnalyzer
 from src.utils import setup_logging, load_env_variables, format_currency, format_percentage, format_ratio
-from config.settings import SCREENING_CRITERIA, OUTPUT_SETTINGS
+from src.portfolio_db import PortfolioDatabase, portfolio_db, format_currency as format_portfolio_currency, get_currency_symbol
+from src.analysis_status import AnalysisStatusManager, MultiStockAnalysisStatus, analysis_status, portfolio_analysis_status
+from config.settings import SCREENING_CRITERIA, OUTPUT_SETTINGS, MULTI_AGENT_SETTINGS
 
 
 # 設置頁面配置
@@ -78,22 +81,20 @@ def main():
     setup_sidebar()
     
     # 主要內容區域
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 股票篩選", "📊 數據分析", "🎯 個股分析", "🤖 AI 分析", "📋 結果報告"])
+    tab1, tab2, tab3 = st.tabs([
+        "🔍 股票篩選與AI分析", 
+        "💼 持股管理", 
+        "📊 持股AI分析"
+    ])
     
     with tab1:
-        screening_interface()
+        combined_screening_ai_interface()
     
     with tab2:
-        data_analysis_interface()
+        portfolio_management_interface()
     
     with tab3:
-        individual_stock_analysis_interface()
-    
-    with tab4:
-        ai_analysis_interface()
-    
-    with tab5:
-        report_interface()
+        portfolio_analysis_interface()
 
 
 def setup_sidebar():
@@ -201,19 +202,58 @@ def setup_sidebar():
         help="分析的股票數量。SP500約有500支成分股"
     )
     
+    # 多代理人辯論設置
+    st.sidebar.markdown("## 🤖 AI 多代理人分析")
+    
+    enable_debate = st.sidebar.checkbox(
+        "啟用多代理人辯論分析",
+        value=MULTI_AGENT_SETTINGS.get('enable_debate', False),
+        help="啟用5位AI投資專家的辯論分析，提供更全面的投資觀點"
+    )
+    
+    if enable_debate:
+        st.sidebar.info("🎯 **投資專家團隊：**")
+        st.sidebar.markdown("• 巴菲特派價值投資師")
+        st.sidebar.markdown("• 葛拉漢派防御型投資師")
+        st.sidebar.markdown("• 成長價值投資師")
+        st.sidebar.markdown("• 市場時機分析師")
+        st.sidebar.markdown("• 風險管理專家")
+        
+        max_analysis = st.sidebar.slider(
+            "多代理人分析股票數量",
+            min_value=1,
+            max_value=min(10, max_stocks),
+            value=min(5, max_stocks),
+            help="進行多代理人辯論分析的股票數量（建議5-10支）"
+        )
+        
+        st.session_state['max_analysis'] = max_analysis
+    else:
+        st.session_state['max_analysis'] = min(10, max_stocks)
+    
+    # 將設置存儲到 session state
+    st.session_state['enable_debate'] = enable_debate
+    
     # 將自訂標準存儲到 session state
     st.session_state['custom_criteria'] = custom_criteria
     st.session_state['max_stocks'] = max_stocks
 
 
-def screening_interface():
-    """股票篩選介面"""
-    st.markdown('<h2 class="sub-header">🔍 股票篩選</h2>', unsafe_allow_html=True)
+def combined_screening_ai_interface():
+    """股票篩選與AI分析合併介面"""
+    st.markdown('<h2 class="sub-header">🔍 股票篩選與AI分析</h2>', unsafe_allow_html=True)
     
     # 顯示當前選擇的投資組合
     if 'selected_portfolio' in st.session_state:
         portfolio_config = STOCK_PORTFOLIOS[st.session_state['selected_portfolio']]
         st.info(f"📊 當前投資組合：{portfolio_config['name']} - {portfolio_config['description']}")
+    
+    # 檢查 API 設置
+    env_vars = load_env_variables()
+    api_available = env_vars.get('gemini_api_key') and env_vars.get('gemini_api_key') != 'your_gemini_api_key_here'
+    
+    if not api_available:
+        st.warning("⚠️ 未設置 Gemini API Key，僅能進行基本篩選，無法執行 AI 分析")
     
     col1, col2 = st.columns([2, 1])
     
@@ -241,45 +281,909 @@ def screening_interface():
         with col1_2:
             if st.button("🔄", help="重新獲取數據", use_container_width=True):
                 # 清除現有數據以強制重新獲取
-                for key in ['raw_data', 'current_portfolio', 'top_stocks', 'ai_analysis_result']:
+                for key in ['raw_data', 'current_portfolio', 'top_stocks', 'ai_analysis_results']:
                     if key in st.session_state:
                         del st.session_state[key]
                 st.rerun()
         
-        # 步驟 2: 價值投資排名
-        if st.button("2️⃣ 價值投資排名分析", use_container_width=True):
+        # 步驟 2: 價值投資排名與AI分析
+        if api_available:
+            button_text = "2️⃣ 價值投資篩選 + AI 分析"
+            button_help = "進行價值投資篩選並自動執行多代理人AI分析"
+        else:
+            button_text = "2️⃣ 價值投資篩選"
+            button_help = "僅進行價值投資篩選（無AI分析）"
+        
+        if st.button(button_text, use_container_width=True, help=button_help):
             if 'raw_data' not in st.session_state:
                 st.error(f"請先獲取 {portfolio_name} 數據")
             else:
                 with st.spinner("正在進行價值投資排名分析..."):
                     apply_screening()
+                
+                # 如果有 API 且篩選成功，自動執行 AI 分析
+                if api_available and 'top_stocks' in st.session_state:
+                    with st.spinner("正在執行 AI 分析..."):
+                        run_ai_analysis()
         
-        # 步驟 3: 查看評分詳情
-        if st.button("3️⃣ 查看評分分析", use_container_width=True):
-            if 'top_stocks' not in st.session_state:
-                st.error("請先執行價值投資排名")
-            else:
-                with st.spinner("正在生成評分分析..."):
-                    calculate_scores()
+        # 步驟 3: 查看結果
+        if 'top_stocks' in st.session_state:
+            if st.button("3️⃣ 查看篩選結果", use_container_width=True):
+                show_screening_results()
+        
+        # 如果只有篩選結果但沒有AI分析，提供單獨的AI分析按鈕
+        if api_available and 'top_stocks' in st.session_state and 'ai_analysis_results' not in st.session_state:
+            if st.button("🤖 執行 AI 分析", use_container_width=True):
+                run_ai_analysis()
     
     with col2:
-        st.markdown("### 排名評分標準")
-        st.markdown("""
-        **多因子價值評分系統 (適合複委託投資者):**
-        - 📊 本益比 (P/E) - 30%權重 - 越低越好
-        - 📈 市淨率 (P/B) - 25%權重 - 越低越好
-        - 🏛️ 債務權益比 - 20%權重 - 越低越好
-        - 💪 股東權益報酬率 - 15%權重 - 越高越好
-        - 📋 利潤率 - 10%權重 - 越高越好
+        st.markdown("### 設置")
         
-        **專注成長性**: 不考慮股息配發，適合追求股價成長的投資策略
-        **結果**: 被低估程度前10名股票
-        """)
+        # AI 分析設置（僅在 API 可用時顯示）
+        if api_available:
+            max_analysis = st.number_input(
+                "AI 分析股票數量",
+                min_value=1,
+                max_value=10,
+                value=st.session_state.get('max_analysis', 5),
+                help="選擇要進行 AI 分析的股票數量"
+            )
+            st.session_state['max_analysis'] = max_analysis
+            
+            # 多代理人辯論設置顯示
+            enable_debate = st.session_state.get('enable_debate', False)
+            if enable_debate:
+                st.success("🤖 多代理人辯論已啟用")
+            else:
+                st.info("ℹ️ 多代理人辯論已關閉")
+        
+        st.markdown("---")
+        st.markdown("**📋 操作說明:**")
+        st.markdown("1. 選擇投資組合並獲取數據")
+        st.markdown("2. 執行篩選與AI分析")
+        st.markdown("3. 查看分析結果")
     
     # 顯示篩選結果
     if 'top_stocks' in st.session_state:
-        st.markdown("### 🏆 價值投資排名結果 - 前 10 名")
+        st.markdown("---")
+        st.markdown("### 📊 篩選結果")
         display_screening_results()
+    
+    # 顯示AI分析結果
+    if 'ai_analysis_results' in st.session_state:
+        st.markdown("---")
+        st.markdown("### 🤖 AI 分析結果")
+        display_ai_analysis_results()
+
+
+def portfolio_management_interface():
+    """持股管理介面 - 新增、刪除、更新持股"""
+    st.markdown('<h2 class="sub-header">💼 持股管理</h2>', unsafe_allow_html=True)
+    
+    # 初始化資料庫
+    db = portfolio_db
+    
+    # 上方按鈕區域
+    col1, col2, col3 = st.columns([1, 1, 2])
+    
+    with col1:
+        if st.button("🔄 重新整理", use_container_width=True):
+            st.rerun()
+    
+    with col2:
+        if st.button("📊 查看投資組合摘要", use_container_width=True):
+            show_portfolio_summary = True
+        else:
+            show_portfolio_summary = False
+    
+    # 顯示投資組合摘要
+    if show_portfolio_summary:
+        summary = db.get_portfolio_summary()
+        if summary:
+            st.markdown("### 📊 投資組合摘要")
+            col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
+            
+            with col_sum1:
+                st.metric("總持股數", summary.get('total_holdings', 0))
+            
+            with col_sum2:
+                st.metric("美股", summary.get('us_stocks', 0))
+            
+            with col_sum3:
+                st.metric("台股", summary.get('tw_stocks', 0))
+            
+            with col_sum4:
+                # 顯示投資額
+                usd_amount = summary.get('total_cost_usd')
+                twd_amount = summary.get('total_cost_twd')
+                
+                if usd_amount and twd_amount:
+                    st.metric("美股投資額", f"${usd_amount:,.2f}")
+                    st.metric("台股投資額", f"NT${twd_amount:,.0f}")
+                elif usd_amount:
+                    st.metric("總投資額", f"${usd_amount:,.2f}")
+                elif twd_amount:
+                    st.metric("總投資額", f"NT${twd_amount:,.0f}")
+                else:
+                    st.metric("總投資額", "未設定")
+            
+            # 如果同時有美股和台股投資，分別顯示
+            if summary.get('total_cost_usd') and summary.get('total_cost_twd'):
+                st.markdown("#### 💰 分市場投資額")
+                col_invest1, col_invest2 = st.columns(2)
+                
+                with col_invest1:
+                    st.info(f"🇺🇸 美股投資: **${summary['total_cost_usd']:,.2f}**")
+                
+                with col_invest2:
+                    st.info(f"🇹🇼 台股投資: **NT${summary['total_cost_twd']:,.0f}**")
+    
+    # 分為兩欄：新增持股 和 持股列表
+    col_left, col_right = st.columns([1, 1])
+    
+    with col_left:
+        st.markdown("### ➕ 新增持股")
+        
+        with st.form("add_stock_form"):
+            # 股票基本資訊
+            symbol = st.text_input(
+                "股票代碼", 
+                placeholder="例如：AAPL 或 2330 (台股自動加.TW)",
+                help="台股只需輸入4位數字代碼，系統會自動添加.TW"
+            ).strip()
+            
+            name = st.text_input("公司名稱", placeholder="例如：Apple Inc. 或 台積電")
+            
+            # 市場選擇（自動判斷）
+            if symbol:
+                if symbol.isdigit() and len(symbol) == 4:
+                    detected_market = "TW (自動偵測)"
+                    actual_market = "TW"
+                elif '.TW' in symbol.upper() or '.TWO' in symbol.upper():
+                    detected_market = "TW (自動偵測)"
+                    actual_market = "TW"
+                else:
+                    detected_market = "US (自動偵測)"
+                    actual_market = "US"
+                
+                st.info(f"🔍 偵測到市場: {detected_market}")
+            else:
+                actual_market = "US"
+            
+            # 持股詳細資訊（選填）
+            st.markdown("**持股詳細資訊（選填）**")
+            col_shares, col_cost = st.columns(2)
+            
+            with col_shares:
+                shares = st.number_input("持股數量", min_value=0.0, value=0.0, step=1.0)
+            
+            with col_cost:
+                if symbol:
+                    if symbol.isdigit() and len(symbol) == 4:
+                        cost_label = "平均成本 (新台幣)"
+                    elif '.TW' in symbol.upper():
+                        cost_label = "平均成本 (新台幣)"
+                    else:
+                        cost_label = "平均成本 (美元)"
+                else:
+                    cost_label = "平均成本"
+                
+                avg_cost = st.number_input(cost_label, min_value=0.0, value=0.0, step=0.01)
+            
+            notes = st.text_area("備註", placeholder="投資理由或其他備註...")
+            
+            submitted = st.form_submit_button("➕ 新增股票", use_container_width=True)
+            
+            if submitted:
+                if symbol and name:
+                    # 設置shares和avg_cost為None如果為0
+                    shares_val = shares if shares > 0 else None
+                    cost_val = avg_cost if avg_cost > 0 else None
+                    
+                    # 檢查是否已存在（用於顯示合併訊息）
+                    existing = db.get_holding(symbol, actual_market)
+                    
+                    success = db.add_stock(symbol, name, actual_market, shares_val, cost_val, notes)
+                    
+                    if success:
+                        if existing and existing.get('shares') and existing.get('avg_cost') and shares_val and cost_val:
+                            st.success(f"✅ 成功合併持股 {symbol} - {name} (已進行加權平均)")
+                        else:
+                            st.success(f"✅ 成功新增 {symbol} - {name}")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("❌ 新增失敗")
+                else:
+                    st.error("❌ 請填寫股票代碼和公司名稱")
+    
+    with col_right:
+        st.markdown("### 📋 我的持股")
+        
+        # 市場篩選和批量操作
+        col_filter, col_batch = st.columns(2)
+        
+        with col_filter:
+            market_filter = st.selectbox("篩選市場", ["全部", "US", "TW"], key="market_filter")
+        
+        with col_batch:
+            if st.button("🗑️ 批量刪除", use_container_width=True):
+                st.session_state['show_batch_delete'] = True
+        
+        # 獲取持股
+        if market_filter == "全部":
+            holdings = db.get_all_holdings()
+        else:
+            holdings = db.get_holdings_by_market(market_filter)
+        
+        # 批量刪除介面
+        if st.session_state.get('show_batch_delete', False):
+            st.markdown("#### 🗑️ 批量刪除持股")
+            
+            if holdings:
+                # 選擇要刪除的股票
+                delete_options = []
+                for holding in holdings:
+                    delete_options.append({
+                        'label': f"{holding['symbol']} - {holding['name']} ({holding['market']})",
+                        'value': (holding['symbol'], holding['market'])
+                    })
+                
+                selected_to_delete = st.multiselect(
+                    "選擇要刪除的股票",
+                    options=[opt['value'] for opt in delete_options],
+                    format_func=lambda x: next(opt['label'] for opt in delete_options if opt['value'] == x)
+                )
+                
+                col_confirm, col_cancel = st.columns(2)
+                
+                with col_confirm:
+                    if st.button("⚠️ 確認刪除", use_container_width=True, type="primary"):
+                        if selected_to_delete:
+                            results = db.batch_remove_stocks(selected_to_delete)
+                            success_count = sum(1 for success in results.values() if success)
+                            
+                            if success_count > 0:
+                                st.success(f"✅ 成功刪除 {success_count} 檔股票")
+                                st.session_state['show_batch_delete'] = False
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("❌ 刪除失敗")
+                        else:
+                            st.warning("⚠️ 請選擇要刪除的股票")
+                
+                with col_cancel:
+                    if st.button("❌ 取消", use_container_width=True):
+                        st.session_state['show_batch_delete'] = False
+                        st.rerun()
+            else:
+                st.info("📝 沒有股票可以刪除")
+                if st.button("❌ 關閉", use_container_width=True):
+                    st.session_state['show_batch_delete'] = False
+                    st.rerun()
+        
+        if holdings:
+            for i, holding in enumerate(holdings):
+                with st.expander(f"{holding['symbol']} - {holding['name']}", expanded=False):
+                    col_info1, col_info2 = st.columns(2)
+                    
+                    with col_info1:
+                        market_flag = "🇺🇸" if holding['market'] == 'US' else "🇹🇼"
+                        st.write(f"**市場：** {market_flag} {holding['market']}")
+                        
+                        if holding['shares']:
+                            st.write(f"**持股數量：** {holding['shares']:,.0f}")
+                        
+                        if holding['avg_cost'] and holding.get('currency'):
+                            currency_symbol = get_currency_symbol(holding['currency'])
+                            st.write(f"**平均成本：** {currency_symbol}{holding['avg_cost']:,.2f}")
+                        
+                        if holding['shares'] and holding['avg_cost'] and holding.get('currency'):
+                            total_cost = holding['shares'] * holding['avg_cost']
+                            currency_symbol = get_currency_symbol(holding['currency'])
+                            st.write(f"**總投資額：** {currency_symbol}{total_cost:,.2f}")
+                    
+                    with col_info2:
+                        if holding['notes']:
+                            st.write(f"**備註：** {holding['notes']}")
+                        st.write(f"**創建時間：** {holding['created_at'][:16]}")
+                        st.write(f"**更新時間：** {holding['updated_at'][:16]}")
+                    
+                    # 操作按鈕
+                    col_btn1, col_btn2, col_btn3 = st.columns(3)
+                    
+                    with col_btn1:
+                        if st.button("✏️ 編輯", key=f"edit_{holding['symbol']}_{holding['market']}"):
+                            st.session_state[f'editing_{holding["symbol"]}_{holding["market"]}'] = True
+                    
+                    with col_btn2:
+                        if st.button("🗑️ 刪除", key=f"delete_{holding['symbol']}_{holding['market']}"):
+                            if db.remove_stock(holding['symbol'], holding['market']):
+                                st.success(f"✅ 已刪除 {holding['symbol']}")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("❌ 刪除失敗")
+                    
+                    # 編輯模式
+                    if st.session_state.get(f'editing_{holding["symbol"]}_{holding["market"]}'):
+                        st.markdown("---")
+                        st.markdown("**編輯持股資訊**")
+                        
+                        with st.form(f"edit_form_{holding['symbol']}_{holding['market']}"):
+                            new_shares = st.number_input(
+                                "新的持股數量", 
+                                value=float(holding['shares']) if holding['shares'] else 0.0,
+                                min_value=0.0, step=1.0
+                            )
+                            
+                            # 根據市場顯示適當的貨幣標籤
+                            currency = holding.get('currency', 'USD')
+                            currency_name = "新台幣" if currency == "TWD" else "美元"
+                            
+                            new_cost = st.number_input(
+                                f"新的平均成本 ({currency_name})",
+                                value=float(holding['avg_cost']) if holding['avg_cost'] else 0.0,
+                                min_value=0.0, step=0.01
+                            )
+                            new_notes = st.text_area(
+                                "新的備註",
+                                value=holding['notes'] if holding['notes'] else ""
+                            )
+                            
+                            col_form_btn1, col_form_btn2 = st.columns(2)
+                            
+                            with col_form_btn1:
+                                if st.form_submit_button("💾 儲存", use_container_width=True):
+                                    shares_val = new_shares if new_shares > 0 else None
+                                    cost_val = new_cost if new_cost > 0 else None
+                                    
+                                    if db.update_holding(
+                                        holding['symbol'], holding['market'],
+                                        shares_val, cost_val, new_notes
+                                    ):
+                                        st.success("✅ 更新成功")
+                                        del st.session_state[f'editing_{holding["symbol"]}_{holding["market"]}']
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ 更新失敗")
+                            
+                            with col_form_btn2:
+                                if st.form_submit_button("❌ 取消", use_container_width=True):
+                                    del st.session_state[f'editing_{holding["symbol"]}_{holding["market"]}']
+                                    st.rerun()
+        else:
+            st.info("📝 還沒有持股資料，請先新增股票")
+
+
+def portfolio_analysis_interface():
+    """持股AI分析介面"""
+    st.markdown('<h2 class="sub-header">📊 持股AI分析</h2>', unsafe_allow_html=True)
+    
+    # 檢查 API 設置
+    env_vars = load_env_variables()
+    api_available = env_vars.get('gemini_api_key') and env_vars.get('gemini_api_key') != 'your_gemini_api_key_here'
+    
+    if not api_available:
+        st.error("⚠️ 請先設置 Gemini API Key 才能使用AI分析功能")
+        return
+    
+    # 獲取持股資料
+    db = portfolio_db
+    holdings = db.get_all_holdings()
+    
+    if not holdings:
+        st.warning("📝 還沒有持股資料，請先到「持股管理」新增股票")
+        return
+    
+    # 初始化分析列表（如果不存在）
+    if 'analysis_list' not in st.session_state:
+        st.session_state['analysis_list'] = [
+            {
+                'symbol': h['symbol'],
+                'name': h['name'],
+                'market': h['market'],
+                'included': True
+            }
+            for h in holdings
+        ]
+    else:
+        # 更新分析列表（處理新增或刪除的股票）
+        existing_symbols = {f"{item['symbol']}_{item['market']}" for item in st.session_state['analysis_list']}
+        current_symbols = {f"{h['symbol']}_{h['market']}" for h in holdings}
+        
+        # 移除已經不存在的股票
+        st.session_state['analysis_list'] = [
+            item for item in st.session_state['analysis_list']
+            if f"{item['symbol']}_{item['market']}" in current_symbols
+        ]
+        
+        # 添加新增的股票
+        for h in holdings:
+            key = f"{h['symbol']}_{h['market']}"
+            if key not in existing_symbols:
+                st.session_state['analysis_list'].append({
+                    'symbol': h['symbol'],
+                    'name': h['name'],
+                    'market': h['market'],
+                    'included': True
+                })
+    
+    # 顯示持股選擇列表
+    st.markdown("### 🎯 選擇要分析的股票")
+    st.markdown("✅ 表示將被分析，❌ 表示將被剔除")
+    
+    # 按市場分組顯示
+    us_stocks = [item for item in st.session_state['analysis_list'] if item['market'] == 'US']
+    tw_stocks = [item for item in st.session_state['analysis_list'] if item['market'] == 'TW']
+    
+    # 美股區域
+    if us_stocks:
+        st.markdown("#### 🇺🇸 美股")
+        for i, stock in enumerate(us_stocks):
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                status = "✅" if stock['included'] else "❌"
+                st.write(f"{status} **{stock['symbol']}** - {stock['name']}")
+            
+            with col2:
+                if stock['included']:
+                    if st.button("❌ 剔除", key=f"remove_us_{i}", use_container_width=True):
+                        # 直接修改analysis_list
+                        for item in st.session_state['analysis_list']:
+                            if item['symbol'] == stock['symbol'] and item['market'] == stock['market']:
+                                item['included'] = False
+                                break
+                        st.rerun()
+                else:
+                    if st.button("✅ 加入", key=f"add_us_{i}", use_container_width=True):
+                        # 直接修改analysis_list
+                        for item in st.session_state['analysis_list']:
+                            if item['symbol'] == stock['symbol'] and item['market'] == stock['market']:
+                                item['included'] = True
+                                break
+                        st.rerun()
+    
+    # 台股區域
+    if tw_stocks:
+        st.markdown("#### 🇹🇼 台股")
+        for i, stock in enumerate(tw_stocks):
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                status = "✅" if stock['included'] else "❌"
+                st.write(f"{status} **{stock['symbol']}** - {stock['name']}")
+            
+            with col2:
+                if stock['included']:
+                    if st.button("❌ 剔除", key=f"remove_tw_{i}", use_container_width=True):
+                        # 直接修改analysis_list
+                        for item in st.session_state['analysis_list']:
+                            if item['symbol'] == stock['symbol'] and item['market'] == stock['market']:
+                                item['included'] = False
+                                break
+                        st.rerun()
+                else:
+                    if st.button("✅ 加入", key=f"add_tw_{i}", use_container_width=True):
+                        # 直接修改analysis_list
+                        for item in st.session_state['analysis_list']:
+                            if item['symbol'] == stock['symbol'] and item['market'] == stock['market']:
+                                item['included'] = True
+                                break
+                        st.rerun()
+    
+    # 快速操作按鈕
+    st.markdown("---")
+    col_quick1, col_quick2, col_quick3, col_quick4 = st.columns(4)
+    
+    with col_quick1:
+        if st.button("✅ 全選", use_container_width=True):
+            for item in st.session_state['analysis_list']:
+                item['included'] = True
+            st.rerun()
+    
+    with col_quick2:
+        if st.button("❌ 全部剔除", use_container_width=True):
+            for item in st.session_state['analysis_list']:
+                item['included'] = False
+            st.rerun()
+    
+    with col_quick3:
+        if st.button("🇺🇸 僅選美股", use_container_width=True):
+            for item in st.session_state['analysis_list']:
+                item['included'] = (item['market'] == 'US')
+            st.rerun()
+    
+    with col_quick4:
+        if st.button("🇹🇼 僅選台股", use_container_width=True):
+            for item in st.session_state['analysis_list']:
+                item['included'] = (item['market'] == 'TW')
+            st.rerun()
+    
+    # 統計選中的股票
+    selected_stocks = [item for item in st.session_state['analysis_list'] if item['included']]
+    selected_tickers = [item['symbol'] for item in selected_stocks]
+    
+    if selected_stocks:
+        st.success(f"✅ 已選擇 {len(selected_stocks)} 檔股票進行分析")
+        
+        # 顯示選中的股票列表
+        with st.expander("📋 查看選中的股票", expanded=False):
+            for stock in selected_stocks:
+                market_flag = "🇺🇸" if stock['market'] == 'US' else "🇹🇼"
+                st.write(f"{market_flag} {stock['symbol']} - {stock['name']}")
+        
+        # 分析選項
+        col_opt1, col_opt2 = st.columns(2)
+        
+        with col_opt1:
+            enable_debate = st.checkbox(
+                "🗣️ 啟用多代理人辯論",
+                value=True,
+                help="啟用多代理人辯論可獲得更全面的分析，但會耗費較多時間"
+            )
+        
+        with col_opt2:
+            save_results = st.checkbox(
+                "💾 儲存分析結果",
+                value=True,
+                help="將分析結果儲存到資料庫中"
+            )
+        
+        # 開始分析按鈕
+        if st.button("🚀 開始AI分析", use_container_width=True, type="primary"):
+            analyze_selected_portfolio(selected_tickers, enable_debate, save_results)
+    else:
+        st.info("請選擇要分析的股票")
+    
+    # 顯示分析結果
+    if 'portfolio_ai_results' in st.session_state:
+        st.markdown("---")
+        st.markdown("### 🤖 AI分析結果")
+        display_portfolio_ai_results()
+
+
+def analyze_selected_portfolio(tickers, enable_debate=True, save_results=True):
+    """分析選定的持股組合"""
+    if not tickers:
+        st.error("沒有選擇任何股票")
+        return
+    
+    # 初始化狀態管理器
+    portfolio_status = portfolio_analysis_status
+    portfolio_status.start_portfolio_analysis(tickers)
+    
+    # 創建狀態顯示區域
+    status_container = st.empty()
+    
+    try:
+        # 初始化數據獲取器和分析器
+        fetcher = MultiMarketDataFetcher()
+        analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=enable_debate, status_manager=portfolio_status)
+        
+        results = {}
+        
+        # 分析每一檔股票
+        for i, ticker in enumerate(tickers):
+            # 更新狀態
+            portfolio_status.start_stock_analysis(ticker, i)
+            
+            # 在狀態容器中顯示進度
+            with status_container.container():
+                portfolio_status.display_portfolio_status()
+            
+            try:
+                # 獲取股票數據
+                stock_data = fetcher.get_stock_data(ticker)
+                
+                if stock_data and 'error' not in stock_data:
+                    # 執行AI分析
+                    analysis_result = analyzer.analyze_stock_comprehensive(stock_data, include_debate=enable_debate)
+                    
+                    # 儲存結果
+                    results[ticker] = {
+                        'stock_data': stock_data,
+                        'analysis': analysis_result,
+                        'status': 'success'
+                    }
+                    
+                    # 儲存到資料庫
+                    if save_results:
+                        db = portfolio_db
+                        market = 'TW' if '.TW' in ticker else 'US'
+                        db.save_analysis_result(
+                            ticker, market, 'portfolio',
+                            json.dumps(analysis_result, ensure_ascii=False)
+                        )
+                    
+                else:
+                    results[ticker] = {
+                        'error': f"無法獲取 {ticker} 的數據",
+                        'status': 'error'
+                    }
+                
+                # 完成單一股票分析
+                portfolio_status.complete_stock_analysis(ticker, results[ticker])
+                
+            except Exception as e:
+                logging.error(f"分析 {ticker} 時發生錯誤: {e}")
+                results[ticker] = {
+                    'error': str(e),
+                    'status': 'error'
+                }
+        
+        # 完成所有分析
+        portfolio_status.finish_analysis(True)
+        
+        # 儲存結果到session state
+        st.session_state['portfolio_ai_results'] = results
+        st.session_state['portfolio_ai_summary'] = generate_portfolio_ai_summary(results)
+        
+        # 清除狀態顯示
+        status_container.empty()
+        
+        st.success(f"🎉 完成 {len(tickers)} 檔股票的AI分析！")
+        st.rerun()
+        
+    except Exception as e:
+        portfolio_status.finish_analysis(False)
+        status_container.empty()
+        st.error(f"分析過程中發生錯誤: {e}")
+        logging.error(f"持股組合分析錯誤: {e}")
+
+
+def generate_portfolio_ai_summary(results):
+    """生成投資組合AI分析摘要"""
+    if not results:
+        return {}
+    
+    total_stocks = len(results)
+    successful_analyses = len([r for r in results.values() if r.get('status') == 'success'])
+    failed_analyses = total_stocks - successful_analyses
+    
+    # 統計建議分布
+    recommendations = {}
+    risk_levels = {}
+    
+    for ticker, result in results.items():
+        if result.get('status') == 'success' and 'analysis' in result:
+            analysis = result['analysis']
+            
+            # 提取建議
+            if 'integrated_recommendation' in analysis:
+                rec = analysis['integrated_recommendation'].get('final_action', 'Unknown')
+                recommendations[rec] = recommendations.get(rec, 0) + 1
+            
+            # 提取風險等級
+            if 'risk_assessment' in analysis:
+                risk = analysis['risk_assessment'].get('overall_risk_level', 'Unknown')
+                risk_levels[risk] = risk_levels.get(risk, 0) + 1
+    
+    return {
+        'total_stocks': total_stocks,
+        'successful_analyses': successful_analyses,
+        'failed_analyses': failed_analyses,
+        'recommendations': recommendations,
+        'risk_levels': risk_levels,
+        'analysis_timestamp': datetime.now().isoformat()
+    }
+
+
+def display_portfolio_ai_results():
+    """顯示投資組合AI分析結果"""
+    if 'portfolio_ai_results' not in st.session_state:
+        return
+    
+    results = st.session_state['portfolio_ai_results']
+    summary = st.session_state.get('portfolio_ai_summary', {})
+    
+    # 顯示摘要
+    if summary:
+        st.markdown("#### 📊 分析摘要")
+        
+        col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
+        
+        with col_sum1:
+            st.metric("總股票數", summary['total_stocks'])
+        
+        with col_sum2:
+            st.metric("成功分析", summary['successful_analyses'])
+        
+        with col_sum3:
+            st.metric("分析失敗", summary['failed_analyses'])
+        
+        with col_sum4:
+            success_rate = (summary['successful_analyses'] / summary['total_stocks']) * 100
+            st.metric("成功率", f"{success_rate:.1f}%")
+    
+    # 顯示詳細結果
+    st.markdown("#### 📋 詳細分析結果")
+    
+    for ticker, result in results.items():
+        with st.expander(f"📈 {ticker} - 詳細分析", expanded=False):
+            if result.get('status') == 'success':
+                display_single_stock_ai_analysis(ticker, result)
+            else:
+                st.error(f"❌ 分析失敗: {result.get('error', '未知錯誤')}")
+
+
+def display_single_stock_ai_analysis(ticker, result):
+    """顯示單一股票的AI分析結果"""
+    if 'analysis' not in result:
+        st.error("沒有分析結果")
+        return
+    
+    analysis = result['analysis']
+    
+    # 基本資訊
+    if 'stock_data' in result:
+        stock_data = result['stock_data']
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("當前價格", f"${stock_data.get('current_price', 'N/A')}")
+        
+        with col2:
+            market_cap = stock_data.get('market_cap')
+            if market_cap:
+                st.metric("市值", f"${market_cap/1e9:.1f}B")
+            else:
+                st.metric("市值", "N/A")
+        
+        with col3:
+            pe_ratio = stock_data.get('pe_ratio')
+            if pe_ratio:
+                st.metric("本益比", f"{pe_ratio:.1f}")
+            else:
+                st.metric("本益比", "N/A")
+        
+        with col4:
+            dividend_yield = stock_data.get('dividend_yield')
+            if dividend_yield:
+                st.metric("股息率", f"{dividend_yield:.2%}")
+            else:
+                st.metric("股息率", "N/A")
+    
+    # 多代理人辯論結果
+    if 'multi_agent_debate' in analysis:
+        debate = analysis['multi_agent_debate']
+        
+        st.markdown("##### 🗣️ 多代理人辯論結果")
+        
+        if 'voting_results' in debate:
+            voting = debate['voting_results']
+            
+            # 顯示投票結果
+            col_vote1, col_vote2, col_vote3 = st.columns(3)
+            
+            with col_vote1:
+                st.metric("買入票數", voting.get('buy_votes', 0))
+            
+            with col_vote2:
+                st.metric("持有票數", voting.get('hold_votes', 0))
+            
+            with col_vote3:
+                st.metric("賣出票數", voting.get('sell_votes', 0))
+            
+            # 顯示共識度
+            consensus_level = voting.get('consensus_level', 0)
+            st.progress(consensus_level, text=f"專家共識度: {consensus_level:.1%}")
+        
+        # 專家最終立場摘要
+        if 'voting_results' in debate and 'agent_final_positions' in debate['voting_results']:
+            st.markdown("**🎯 專家最終立場:**")
+            
+            positions = debate['voting_results']['agent_final_positions']
+            
+            # 按建議分類顯示
+            buy_agents = []
+            hold_agents = []
+            sell_agents = []
+            
+            for agent_name, position in positions.items():
+                agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
+                rec = position.get('recommendation', 'UNKNOWN')
+                confidence = position.get('confidence', 0)
+                
+                agent_info = f"**{agent_display}** (信心度: {confidence}/10)"
+                
+                if rec == 'BUY':
+                    buy_agents.append(agent_info)
+                elif rec == 'HOLD':
+                    hold_agents.append(agent_info)
+                elif rec == 'SELL':
+                    sell_agents.append(agent_info)
+            
+            col_buy, col_hold, col_sell = st.columns(3)
+            
+            with col_buy:
+                if buy_agents:
+                    st.markdown("🟢 **看好買入:**")
+                    for agent in buy_agents:
+                        st.write(f"• {agent}")
+                else:
+                    st.markdown("🟢 **看好買入:** 無")
+            
+            with col_hold:
+                if hold_agents:
+                    st.markdown("🟡 **建議持有:**")
+                    for agent in hold_agents:
+                        st.write(f"• {agent}")
+                else:
+                    st.markdown("🟡 **建議持有:** 無")
+            
+            with col_sell:
+                if sell_agents:
+                    st.markdown("🔴 **建議賣出:**")
+                    for agent in sell_agents:
+                        st.write(f"• {agent}")
+                else:
+                    st.markdown("� **建議賣出:** 無")
+        
+        # 辯論重點整理
+        if 'final_consensus' in debate:
+            consensus = debate['final_consensus']
+            
+            st.markdown("##### 📝 辯論重點整理")
+            
+            final_rec = consensus.get('final_recommendation', 'UNKNOWN')
+            avg_confidence = consensus.get('average_confidence', 0)
+            
+            # 最終建議
+            if final_rec == 'BUY':
+                st.success(f"🟢 **專家團隊最終建議: 買入** (平均信心度: {avg_confidence:.1f}/10)")
+            elif final_rec == 'SELL':
+                st.error(f"🔴 **專家團隊最終建議: 賣出** (平均信心度: {avg_confidence:.1f}/10)")
+            elif final_rec == 'HOLD':
+                st.warning(f"🟡 **專家團隊最終建議: 持有** (平均信心度: {avg_confidence:.1f}/10)")
+            else:
+                st.info(f"⚪ **專家團隊最終建議: {final_rec}** (平均信心度: {avg_confidence:.1f}/10)")
+            
+            # 主要支持論點
+            if 'supporting_points' in consensus and consensus['supporting_points']:
+                st.markdown("**✅ 主要支持論點:**")
+                for point in consensus['supporting_points'][:3]:  # 只顯示前3個
+                    st.write(f"• {point}")
+            
+            # 主要反對論點
+            if 'opposing_points' in consensus and consensus['opposing_points']:
+                st.markdown("**⚠️ 主要反對論點:**")
+                for point in consensus['opposing_points'][:3]:  # 只顯示前3個
+                    st.write(f"• {point}")
+        
+        # 辯論摘要
+        if 'debate_summary' in debate and debate['debate_summary']:
+            st.markdown("**📋 辯論過程摘要:**")
+            st.write(debate['debate_summary'])
+    
+    # 顯示AI分析結果（如果有整合建議）
+    if 'integrated_recommendation' in analysis:
+        rec = analysis['integrated_recommendation']
+        
+        st.markdown("##### 🎯 綜合投資建議")
+        
+        # 最終行動建議
+        action = rec.get('final_action', 'Unknown')
+        confidence = rec.get('confidence_score', 0)
+        
+        if action == 'BUY':
+            st.success(f"🟢 **建議: 買入** (信心度: {confidence}%)")
+        elif action == 'SELL':
+            st.error(f"🔴 **建議: 賣出** (信心度: {confidence}%)")
+        elif action == 'HOLD':
+            st.warning(f"🟡 **建議: 持有** (信心度: {confidence}%)")
+        else:
+            st.info(f"⚪ **建議: {action}** (信心度: {confidence}%)")
+        
+        # 分析要點
+        if 'key_points' in rec:
+            st.markdown("**關鍵分析要點:**")
+            for point in rec['key_points']:
+                st.write(f"• {point}")
 
 
 def data_analysis_interface():
@@ -829,7 +1733,7 @@ def display_detailed_table(df):
 def run_ai_analysis():
     """執行 AI 分析"""
     try:
-        analyzer = EnhancedStockAnalyzer()
+        analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=st.session_state.get('enable_debate', False))
         top_stocks = st.session_state['top_stocks']
         max_analysis = st.session_state.get('max_analysis', 5)
         
@@ -845,9 +1749,15 @@ def run_ai_analysis():
         analysis_results = []
         for i, stock_data in enumerate(stock_list):
             ticker = stock_data['ticker']
-            status_text.text(f"正在分析 {ticker}... ({i+1}/{len(stock_list)})")
             
-            result = analyzer.analyze_stock_comprehensive(stock_data)
+            # 判斷是否進行多代理人分析
+            enable_debate = st.session_state.get('enable_debate', False)
+            if enable_debate:
+                status_text.text(f"正在進行多代理人辯論分析 {ticker}... ({i+1}/{len(stock_list)})")
+            else:
+                status_text.text(f"正在分析 {ticker}... ({i+1}/{len(stock_list)})")
+            
+            result = analyzer.analyze_stock_comprehensive(stock_data, include_debate=enable_debate)
             analysis_results.append(result)
             
             progress_bar.progress((i + 1) / len(stock_list))
@@ -919,7 +1829,133 @@ def display_ai_analysis_results():
                 news_report = news_sentiment.get('news_intelligence_report', '')
                 if news_report and news_report != '無新聞數據或AI不可用':
                     with st.expander("📋 新聞面情報分析報告"):
-                        st.markdown(news_report)                # 風險評估
+                        st.markdown(news_report)
+                
+                # 多代理人辯論結果
+                if 'multi_agent_debate' in result:
+                    debate_result = result['multi_agent_debate']
+                    if 'error' not in debate_result:
+                        st.markdown("---")
+                        st.markdown("#### 🤖 多代理人投資辯論分析")
+                        
+                        # 最終共識
+                        final_consensus = debate_result.get('final_consensus', {})
+                        col_debate1, col_debate2, col_debate3 = st.columns(3)
+                        
+                        with col_debate1:
+                            st.metric(
+                                "專家最終建議",
+                                final_consensus.get('final_recommendation', 'N/A')
+                            )
+                        
+                        with col_debate2:
+                            consensus_level = final_consensus.get('consensus_level', 0)
+                            st.metric(
+                                "專家共識度",
+                                f"{consensus_level:.1%}"
+                            )
+                        
+                        with col_debate3:
+                            avg_confidence = final_consensus.get('average_confidence', 0)
+                            st.metric(
+                                "平均信心度",
+                                f"{avg_confidence:.1f}/10"
+                            )
+                        
+                        # 投票分佈
+                        vote_dist = final_consensus.get('vote_distribution', {})
+                        if vote_dist:
+                            st.markdown("**🗳️ 專家投票分佈:**")
+                            vote_col1, vote_col2, vote_col3 = st.columns(3)
+                            with vote_col1:
+                                st.write(f"買入: {vote_dist.get('BUY', 0)} 票")
+                            with vote_col2:
+                                st.write(f"持有: {vote_dist.get('HOLD', 0)} 票")
+                            with vote_col3:
+                                st.write(f"賣出: {vote_dist.get('SELL', 0)} 票")
+                        
+                        # 辯論摘要
+                        debate_summary = debate_result.get('debate_summary', '')
+                        if debate_summary:
+                            st.markdown("**📝 辯論摘要:**")
+                            st.write(debate_summary)
+                        
+                        # 主要論點
+                        supporting_points = final_consensus.get('supporting_points', [])
+                        opposing_points = final_consensus.get('opposing_points', [])
+                        
+                        if supporting_points or opposing_points:
+                            debate_col1, debate_col2 = st.columns(2)
+                            
+                            with debate_col1:
+                                if supporting_points:
+                                    st.markdown("**✅ 主要支持論點:**")
+                                    for point in supporting_points[:3]:
+                                        st.write(f"• {point}")
+                            
+                            with debate_col2:
+                                if opposing_points:
+                                    st.markdown("**❌ 主要反對論點:**")
+                                    for point in opposing_points[:3]:
+                                        st.write(f"• {point}")
+                        
+                        # 各專家詳細分析
+                        agents_analysis = debate_result.get('agents_analysis', {})
+                        if agents_analysis:
+                            with st.expander("🔍 各專家詳細觀點"):
+                                for agent_name, analysis_data in agents_analysis.items():
+                                    st.markdown(f"**{agent_name}**:")
+                                    st.write(f"- 建議: {analysis_data.get('recommendation', 'N/A')}")
+                                    st.write(f"- 信心度: {analysis_data.get('confidence', 'N/A')}/10")
+                                    st.write(f"- 風險評估: {analysis_data.get('risk_level', 'N/A')}")
+                                    
+                                    analysis_text = analysis_data.get('analysis', '')
+                                    if analysis_text:
+                                        st.write(f"- 分析觀點: {analysis_text[:200]}...")
+                                    st.write("---")
+                
+                # 整合分析結果
+                if 'integrated_recommendation' in result:
+                    integrated = result['integrated_recommendation']
+                    if 'error' not in integrated:
+                        st.markdown("---")
+                        st.markdown("#### 🎯 最終整合建議")
+                        
+                        integrate_col1, integrate_col2 = st.columns(2)
+                        
+                        with integrate_col1:
+                            st.metric(
+                                "整合後建議",
+                                integrated.get('final_recommendation', 'N/A')
+                            )
+                            
+                            confidence = integrated.get('confidence_level', 0)
+                            st.metric(
+                                "整合信心度",
+                                f"{confidence:.1f}/10"
+                            )
+                        
+                        with integrate_col2:
+                            risk_assessment = integrated.get('risk_assessment', 'N/A')
+                            st.metric(
+                                "風險評估",
+                                risk_assessment
+                            )
+                            
+                            consensus_level = integrated.get('consensus_level', 0)
+                            st.metric(
+                                "專家共識度",
+                                f"{consensus_level:.1%}"
+                            )
+                        
+                        # 整合理由
+                        reasoning = integrated.get('reasoning', [])
+                        if reasoning:
+                            st.markdown("**📋 整合理由:**")
+                            for reason in reasoning:
+                                st.write(f"• {reason}")
+                
+                # 風險評估
                 risk = result.get('risk_assessment', {})
                 if risk:
                     st.markdown("##### ⚠️ 風險評估")
@@ -1185,10 +2221,12 @@ def display_individual_analysis_results(analysis_result, symbol):
         display_news_analysis_tab(analysis_result)
     
     with tab3:
-        display_technical_analysis_tab(analysis_result)
+        # display_technical_analysis_tab(analysis_result)  # 已簡化，在單一股票分析中顯示
+        st.info("技術分析已整合到個別股票分析中")
     
     with tab4:
-        display_chip_analysis_tab(analysis_result)
+        # display_chip_analysis_tab(analysis_result)  # 已簡化，在單一股票分析中顯示
+        st.info("籌碼分析已整合到個別股票分析中")
 
 
 def display_overview_tab(analysis_result, symbol):
@@ -1222,7 +2260,8 @@ def display_overview_tab(analysis_result, symbol):
     
     # 各維度評分雷達圖
     if all(key in analysis_result for key in ['news_score', 'technical_score', 'chip_score']):
-        create_radar_chart(analysis_result)
+        # create_radar_chart(analysis_result)  # 已簡化
+        st.info("評分雷達圖功能已簡化，詳細評分請查看個別分析結果")
 
 
 def display_news_analysis_tab(analysis_result):
@@ -1384,145 +2423,283 @@ def display_news_analysis_tab(analysis_result):
             else:
                 for point in attention_points:
                     st.write(f"• {point}")
+
+
+def show_screening_results():
+    """顯示篩選結果（簡化版）"""
+    if 'top_stocks' not in st.session_state:
+        st.warning("尚未進行股票篩選")
+        return
+    
+    st.success(f"✅ 篩選完成！找到 {len(st.session_state['top_stocks'])} 支優質股票")
+    
+    # 快速統計
+    df = st.session_state['top_stocks']
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        avg_score = df['value_score'].mean() if 'value_score' in df.columns else 0
+        st.metric("平均評分", f"{avg_score:.1f}")
+    
+    with col2:
+        avg_pe = df['trailing_pe'].mean() if 'trailing_pe' in df.columns else 0
+        st.metric("平均本益比", f"{avg_pe:.1f}")
+    
+    with col3:
+        avg_pb = df['price_to_book'].mean() if 'price_to_book' in df.columns else 0
+        st.metric("平均市淨率", f"{avg_pb:.2f}")
+    
+    with col4:
+        count_low_debt = (df['debt_to_equity'] < 0.5).sum() if 'debt_to_equity' in df.columns else 0
+        st.metric("低負債股票", f"{count_low_debt} 支")
+
+
+def analyze_my_portfolio(tickers: list, enable_debate: bool = False):
+    """分析個人持股"""
+    try:
+        analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=enable_debate)
         
-        # 完整新聞面情報報告
-        if 'news_intelligence_report' in news_analysis and news_analysis['news_intelligence_report']:
-            with st.expander("📋 完整新聞面情報分析報告", expanded=False):
-                report = news_analysis['news_intelligence_report']
-                st.markdown(report)
-    
-    else:
-        st.info("暫無新聞分析數據")
-        st.write("請先在 AI 分析標籤中執行股票分析以獲取新聞數據。")
+        # 將股票代碼轉換為分析器需要的格式
+        stock_list = []
+        for ticker in tickers:
+            stock_data = {
+                'ticker': ticker,
+                'symbol': ticker,
+                'company_name': ticker  # 簡化版，實際應該獲取公司名稱
+            }
+            stock_list.append(stock_data)
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # 執行分析
+        analysis_results = []
+        for i, stock_data in enumerate(stock_list):
+            ticker = stock_data['ticker']
+            
+            if enable_debate:
+                status_text.text(f"正在進行多代理人辯論分析 {ticker}... ({i+1}/{len(stock_list)})")
+            else:
+                status_text.text(f"正在分析 {ticker}... ({i+1}/{len(stock_list)})")
+            
+            result = analyzer.analyze_stock_comprehensive(stock_data, include_debate=enable_debate)
+            analysis_results.append(result)
+            
+            progress_bar.progress((i + 1) / len(stock_list))
+        
+        st.session_state['portfolio_analysis_results'] = analysis_results
+        
+        status_text.text("持股分析完成！")
+        success_count = len([r for r in analysis_results if 'error' not in r])
+        st.success(f"成功完成 {success_count}/{len(tickers)} 支股票的分析")
+        
+        # 生成持股摘要
+        generate_portfolio_summary(analysis_results, enable_debate)
+        
+    except Exception as e:
+        st.error(f"分析過程中發生錯誤: {e}")
 
 
-def display_technical_analysis_tab(analysis_result):
-    """顯示技術分析標籤"""
-    st.subheader("📈 技術指標分析")
+def generate_portfolio_summary(analysis_results: list, enable_debate: bool):
+    """生成持股分析摘要"""
+    try:
+        successful_results = [r for r in analysis_results if 'error' not in r]
+        
+        if not successful_results:
+            return
+        
+        # 統計投資建議分佈
+        recommendations = {}
+        scores = []
+        risk_levels = {}
+        
+        for result in successful_results:
+            # 投資建議統計
+            if enable_debate and 'integrated_recommendation' in result:
+                rec = result['integrated_recommendation'].get('final_recommendation', 'HOLD')
+            else:
+                rec = result.get('investment_recommendation', 'HOLD')
+            recommendations[rec] = recommendations.get(rec, 0) + 1
+            
+            # 評分統計
+            score = result.get('overall_score', 0)
+            scores.append(score)
+            
+            # 風險統計
+            risk = result.get('risk_assessment', {}).get('overall_risk', 'MEDIUM')
+            risk_levels[risk] = risk_levels.get(risk, 0) + 1
+        
+        # 將摘要存儲到 session state
+        portfolio_summary = {
+            'total_stocks': len(analysis_results),
+            'successful_analysis': len(successful_results),
+            'average_score': sum(scores) / len(scores) if scores else 0,
+            'recommendations': recommendations,
+            'risk_distribution': risk_levels,
+            'enable_debate': enable_debate
+        }
+        
+        st.session_state['portfolio_summary'] = portfolio_summary
+        
+    except Exception as e:
+        st.error(f"生成摘要時發生錯誤: {e}")
+
+
+def display_portfolio_analysis_results():
+    """顯示持股分析結果"""
+    if 'portfolio_analysis_results' not in st.session_state:
+        st.warning("尚未進行持股分析")
+        return
     
-    tech_analysis = analysis_result.get('technical_analysis', {})
+    results = st.session_state['portfolio_analysis_results']
     
-    if tech_analysis:
-        # 技術指標概覽
-        col1, col2, col3 = st.columns(3)
+    # 顯示摘要
+    if 'portfolio_summary' in st.session_state:
+        summary = st.session_state['portfolio_summary']
+        
+        st.markdown("#### 📊 持股分析摘要")
+        
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            rsi = tech_analysis.get('rsi', 0)
-            st.metric("RSI", f"{rsi:.1f}")
-            if rsi > 70:
-                st.caption("🔴 超買區域")
-            elif rsi < 30:
-                st.caption("🟢 超賣區域")
-            else:
-                st.caption("🟡 正常區域")
+            st.metric("總持股", f"{summary['total_stocks']} 支")
         
         with col2:
-            macd = tech_analysis.get('macd', 0)
-            st.metric("MACD", f"{macd:.3f}")
-            if macd > 0:
-                st.caption("🟢 多頭訊號")
-            else:
-                st.caption("🔴 空頭訊號")
+            success_rate = summary['successful_analysis'] / summary['total_stocks'] * 100 if summary['total_stocks'] > 0 else 0
+            st.metric("分析成功率", f"{success_rate:.0f}%")
         
         with col3:
-            ma_signal = tech_analysis.get('ma_signal', 'neutral')
-            signal_text = {"bullish": "多頭", "bearish": "空頭", "neutral": "中性"}
-            st.metric("移動平均", signal_text.get(ma_signal, "中性"))
+            st.metric("平均評分", f"{summary['average_score']:.1f}")
         
-        # 移動平均線分析
-        if 'moving_averages' in tech_analysis:
-            st.subheader("📊 移動平均線")
-            ma_data = tech_analysis['moving_averages']
+        with col4:
+            enable_debate = summary.get('enable_debate', False)
+            debate_status = "已啟用" if enable_debate else "未啟用"
+            st.metric("多代理人辯論", debate_status)
+        
+        # 投資建議分佈
+        if summary['recommendations']:
+            st.markdown("#### 📈 投資建議分佈")
+            rec_col1, rec_col2, rec_col3 = st.columns(3)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if 'ma_20' in ma_data:
-                    st.write(f"20日均線: ${ma_data['ma_20']:.2f}")
-                if 'ma_50' in ma_data:
-                    st.write(f"50日均線: ${ma_data['ma_50']:.2f}")
+            with rec_col1:
+                buy_count = summary['recommendations'].get('BUY', 0)
+                st.metric("建議買入", f"{buy_count} 支", delta=f"{buy_count/summary['total_stocks']*100:.0f}%")
             
-            with col2:
-                if 'ma_200' in ma_data:
-                    st.write(f"200日均線: ${ma_data['ma_200']:.2f}")
-                if 'current_price' in ma_data:
-                    st.write(f"當前價格: ${ma_data['current_price']:.2f}")
-    else:
-        st.info("暫無技術分析數據")
-
-
-def display_chip_analysis_tab(analysis_result):
-    """顯示籌碼分析標籤"""
-    st.subheader("💰 籌碼結構分析")
+            with rec_col2:
+                hold_count = summary['recommendations'].get('HOLD', 0)
+                st.metric("建議持有", f"{hold_count} 支", delta=f"{hold_count/summary['total_stocks']*100:.0f}%")
+            
+            with rec_col3:
+                sell_count = summary['recommendations'].get('SELL', 0)
+                st.metric("建議賣出", f"{sell_count} 支", delta=f"{sell_count/summary['total_stocks']*100:.0f}%")
     
-    chip_analysis = analysis_result.get('chip_analysis', {})
+    # 顯示個別股票詳細分析
+    st.markdown("#### 🔍 個別股票分析")
     
-    if chip_analysis:
-        # 持股結構
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**機構持股**")
-            institutional = chip_analysis.get('institutional_ownership', 0)
-            st.metric("機構持股比例", f"{institutional:.1f}%")
+    for result in results:
+        if 'error' not in result:
+            ticker = result['ticker']
+            overall_score = result.get('overall_score', 0)
+            recommendation = result.get('investment_recommendation', '無建議')
             
-            insider = chip_analysis.get('insider_ownership', 0)
-            st.metric("內部人持股", f"{insider:.1f}%")
-        
-        with col2:
-            st.write("**市場指標**")
-            short_ratio = chip_analysis.get('short_ratio', 0)
-            st.metric("空頭比率", f"{short_ratio:.2f}")
+            # 根據評分設定顏色
+            if overall_score >= 70:
+                score_color = "🟢"
+            elif overall_score >= 50:
+                score_color = "🟡"
+            else:
+                score_color = "🔴"
             
-            float_short = chip_analysis.get('percent_held_by_institutions', 0)
-            st.metric("機構持有比例", f"{float_short:.1f}%")
-        
-        # 籌碼評估
-        st.subheader("📋 籌碼評估")
-        ownership_score = chip_analysis.get('ownership_score', 0)
-        
-        if ownership_score >= 80:
-            st.success(f"籌碼結構優良 (評分: {ownership_score:.1f})")
-        elif ownership_score >= 60:
-            st.info(f"籌碼結構一般 (評分: {ownership_score:.1f})")
+            with st.expander(f"{score_color} {ticker} (評分: {overall_score})"):
+                # 使用與原有 AI 分析結果相同的顯示邏輯
+                display_single_stock_analysis(result)
         else:
-            st.warning(f"籌碼結構需關注 (評分: {ownership_score:.1f})")
-    else:
-        st.info("暫無籌碼分析數據")
+            ticker = result.get('ticker', 'Unknown')
+            st.error(f"❌ {ticker}: {result.get('error', '未知錯誤')}")
 
 
-def create_radar_chart(analysis_result):
-    """創建評分雷達圖"""
-    import plotly.graph_objects as go
+def display_single_stock_analysis(result):
+    """顯示單一股票的分析結果"""
+    ticker = result['ticker']
+    company_name = result.get('company_name', 'Unknown')
+    overall_score = result.get('overall_score', 0)
+    recommendation = result.get('investment_recommendation', '無建議')
     
-    categories = ['新聞面', '技術面', '籌碼面']
-    scores = [
-        analysis_result.get('news_score', 0),
-        analysis_result.get('technical_score', 0),
-        analysis_result.get('chip_score', 0)
-    ]
+    col1, col2 = st.columns(2)
     
-    fig = go.Figure()
+    with col1:
+        st.markdown("#### 📊 評分概況")
+        st.metric("綜合評分", f"{overall_score}/100")
+        st.write(f"**投資建議**: {recommendation}")
+        
+        # 基本面分析
+        fundamental = result.get('fundamental_analysis', {})
+        st.markdown("##### 💰 基本面分析")
+        st.write(f"- 評分: {fundamental.get('score', 'N/A')}/100")
+        st.write(f"- P/E比率: {fundamental.get('pe_ratio', 'N/A')}")
+        st.write(f"- P/B比率: {fundamental.get('pb_ratio', 'N/A')}")
+        st.write(f"- ROE: {fundamental.get('roe', 'N/A')}")
     
-    fig.add_trace(go.Scatterpolar(
-        r=scores,
-        theta=categories,
-        fill='toself',
-        name='評分',
-        line_color='rgb(31, 119, 180)'
-    ))
+    with col2:
+        # 技術面分析
+        technical = result.get('technical_analysis', {})
+        st.markdown("##### 📈 技術面分析")
+        st.write(f"- 評分: {technical.get('score', 'N/A')}/100")
+        st.write(f"- 趨勢方向: {technical.get('trend', 'N/A')}")
+        st.write(f"- RSI: {technical.get('rsi', 'N/A')}")
+        st.write(f"- 成交量信號: {technical.get('volume_signal', 'N/A')}")
     
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(
-                visible=True,
-                range=[0, 100]
-            )),
-        showlegend=False,
-        title="三維度評分雷達圖",
-        height=400
-    )
+    # 新聞情緒分析
+    news_sentiment = result.get('news_sentiment_analysis', {})
+    st.markdown("##### 📰 新聞情緒分析")
+    st.write(f"- 評分: {news_sentiment.get('score', 'N/A')}/100")
+    st.write(f"- 情緒: {news_sentiment.get('sentiment', 'N/A')}")
+    st.write(f"- 信心度: {news_sentiment.get('confidence', 'N/A')}")
     
-    st.plotly_chart(fig, use_container_width=True)
+    # 多代理人辯論結果（如果有）
+    if 'multi_agent_debate' in result:
+        debate_result = result['multi_agent_debate']
+        if 'error' not in debate_result:
+            st.markdown("---")
+            st.markdown("#### 🤖 多代理人投資辯論分析")
+            
+            # 最終共識
+            final_consensus = debate_result.get('final_consensus', {})
+            debate_col1, debate_col2, debate_col3 = st.columns(3)
+            
+            with debate_col1:
+                st.metric(
+                    "專家最終建議",
+                    final_consensus.get('final_recommendation', 'N/A')
+                )
+            
+            with debate_col2:
+                consensus_level = final_consensus.get('consensus_level', 0)
+                st.metric(
+                    "專家共識度",
+                    f"{consensus_level:.1%}"
+                )
+            
+            with debate_col3:
+                avg_confidence = final_consensus.get('average_confidence', 0)
+                st.metric(
+                    "平均信心度",
+                    f"{avg_confidence:.1f}/10"
+                )
+            
+            # 辯論摘要
+            debate_summary = debate_result.get('debate_summary', '')
+            if debate_summary:
+                st.markdown("**📝 辯論摘要:**")
+                st.write(debate_summary)
+    
+    # 風險評估
+    risk = result.get('risk_assessment', {})
+    if risk:
+        st.markdown("##### ⚠️ 風險評估")
+        st.write(f"- 整體風險: {risk.get('overall_risk', 'N/A')}")
+        st.write(f"- 波動風險: {risk.get('volatility_risk', 'N/A')}")
+        st.write(f"- 估值風險: {risk.get('valuation_risk', 'N/A')}")
 
 
 if __name__ == "__main__":
