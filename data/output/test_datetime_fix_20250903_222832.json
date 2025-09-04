@@ -1,0 +1,17 @@
+{
+  "ticker": "TEST",
+  "news_data": [
+    {
+      "title": "測試新聞",
+      "summary": "測試摘要",
+      "publisher": "Test Publisher",
+      "publish_time": "2024-01-01 10:00:00",
+      "publish_timestamp": "2025-09-03T22:28:32.146517",
+      "url": "https://example.com",
+      "source": "Test",
+      "content": "測試內容",
+      "is_recent": true
+    }
+  ],
+  "analysis_timestamp": "2025-09-03T22:28:32.146583"
+}

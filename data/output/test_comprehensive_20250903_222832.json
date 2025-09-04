@@ -1,0 +1,15 @@
+{
+  "TEST": {
+    "ticker": "TEST",
+    "company_name": "Test Company",
+    "analysis_date": "2025-09-03 22:28:32",
+    "overall_score": 75.5,
+    "news_data": [
+      {
+        "title": "測試新聞",
+        "publish_timestamp": "2025-09-03T22:28:32.148017",
+        "source": "Test"
+      }
+    ]
+  }
+}

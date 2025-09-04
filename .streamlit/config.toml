@@ -1,7 +1,7 @@
 [server]
 port = 5678
 baseUrlPath = ""
-enableCORS = false
+enableCORS = true
 enableXsrfProtection = true
 
 [browser]

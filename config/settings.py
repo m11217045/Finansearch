@@ -26,31 +26,56 @@ API_SETTINGS = {
 
 # Gemini 設定
 GEMINI_SETTINGS = {
-    'model': 'gemini-2.5-pro',  # 使用較便宜的模型
+    'model': 'gemini-2.5-flash',  # 使用較便宜的模型
     'max_tokens': 2048,
     'temperature': 0.3,
     'rate_limit_delay': 3,  # API 請求間隔 (秒)
     'max_retries': 2,       # 減少重試次數以節省配額
 }
 
+# 多代理人辯論系統設定
+MULTI_AGENT_SETTINGS = {
+    'use_openai': False,          # 是否使用 OpenAI API (備選 Gemini)
+    'debate_rounds': 2,           # 辯論輪數
+    'max_agents': 5,              # 最大代理人數量
+    'consensus_threshold': 0.7,   # 共識閾值
+    'debate_timeout': 300,        # 辯論超時時間（秒）
+    'enable_debate': True,        # 是否啟用多代理人辯論
+    'max_concurrent_analysis': 5, # 最大並發分析數（Agent 並發）
+    'enable_concurrent': True,    # 是否啟用並發分析
+}
+
 # 新聞和情緒分析設定
 NEWS_SETTINGS = {
-    'max_news_per_stock': 10,     # 每支股票最多獲取新聞數
-    'news_days_back': 7,          # 獲取多少天內的新聞
+    'max_news_per_stock': 8,      # 每支股票最多獲取新聞數 (減少以提高質量)
+    'news_days_back': 7,          # 獲取7天內的新聞 (短線投資重點)
+    'news_hours_back': 168,       # 獲取168小時內的新聞 (7天)
+    'priority_recent_hours': 24,  # 優先顯示24小時內的新聞
     'sentiment_analysis': True,    # 是否進行情緒分析
     'cache_news': True,           # 是否快取新聞數據
     'scrape_full_content': True,  # 是否爬取完整新聞內容
     'content_analysis': True,     # 是否分析新聞內容
     'max_content_length': 3000,   # 新聞內容最大長度
     'scraping_delay': 1,          # 爬取間隔（秒）
-    'request_timeout': 10,        # 請求超時時間（秒）
+    'request_timeout': 15,        # 請求超時時間（秒）- 增加到15秒
+    'max_retries': 3,             # 最大重試次數
+    'retry_delay': 5,             # 重試延遲基數（秒）
+    'skip_failed_scrapes': True,  # 跳過失敗的爬取並繼續
+    'min_content_length': 50,     # 最小內容長度（低於此值視為失敗）
+    'use_random_delay': True,     # 使用隨機延遲
+    'random_delay_range': [1, 3], # 隨機延遲範圍（秒）
+    'rotate_user_agents': True,   # 輪換 User-Agent
+    'use_session': True,          # 使用 session 保持連接
+    'translate_titles': True,     # 自動翻譯新聞標題為中文
+    'filter_by_relevance': True,  # 根據相關性過濾新聞
+    'short_term_focus': True,     # 專注短線分析
 }
 
 # 綜合分析設定
 ANALYSIS_SETTINGS = {
-    'fundamental_weight': 0.4,    # 基本面權重
-    'technical_weight': 0.3,      # 技術面權重  
-    'news_weight': 0.3,           # 新聞面權重
+    'fundamental_weight': 0.25,   # 基本面權重
+    'technical_weight': 0.25,     # 技術面權重  
+    'news_weight': 0.5,           # 新聞面權重
     'enable_ai_analysis': True,   # 是否啟用AI分析
     'max_concurrent_analysis': 3, # 最大並發分析數
 }

@@ -10,6 +10,7 @@ import json
 from typing import Dict, List, Any, Optional
 from config.settings import GEMINI_SETTINGS
 from src.utils import load_env_variables, retry_on_failure, format_currency, format_percentage, format_ratio
+from src.gemini_key_manager import get_current_gemini_key, report_gemini_error, report_gemini_success
 
 
 class GeminiAnalyzer:
@@ -23,24 +24,25 @@ class GeminiAnalyzer:
     def _setup_gemini(self) -> None:
         """設置 Gemini API"""
         try:
-            api_key = self.env_vars.get('gemini_api_key')
-            if not api_key or api_key == 'your_gemini_api_key_here':
-                raise ValueError("請在 .env 檔案中設置正確的 GEMINI_API_KEY")
+            api_key = get_current_gemini_key()
+            if not api_key:
+                raise ValueError("無法獲取有效的 Gemini API Key，請檢查 .env 檔案中的 GEMINI_API_KEY 設定")
             
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(GEMINI_SETTINGS['model'])
-            logging.info("Gemini AI 初始化成功")
+            logging.info("Gemini AI 初始化成功，使用 Key 管理器")
             
         except Exception as e:
             logging.error(f"Gemini AI 初始化失敗: {e}")
+            report_gemini_error(f"Gemini AI 初始化失敗: {e}")
             raise
     
     def create_analysis_prompt(self, stock_data: Dict[str, Any]) -> str:
         """建立股票分析提示詞"""
         ticker = stock_data.get('ticker', 'Unknown')
-        company_name = stock_data.get('company_name', 'Unknown Company')
-        sector = stock_data.get('sector', 'Unknown')
-        industry = stock_data.get('industry', 'Unknown')
+        company_name = stock_data.get('company_name') or stock_data.get('name', ticker)
+        sector = stock_data.get('sector', '未分類')
+        industry = stock_data.get('industry', '未分類')
         
         # 格式化財務數據
         market_cap = format_currency(stock_data.get('market_cap'))
@@ -106,11 +108,14 @@ class GeminiAnalyzer:
                 )
             )
             
+            # 報告成功使用 API
+            report_gemini_success()
+            
             analysis_result = {
                 'ticker': ticker,
-                'company_name': stock_data.get('company_name', 'Unknown'),
+                'company_name': stock_data.get('company_name') or stock_data.get('name', ticker),
                 'analysis_text': response.text,
-                'analysis_timestamp': pd.Timestamp.now(),
+                'analysis_timestamp': pd.Timestamp.now().isoformat(),
                 'model_used': GEMINI_SETTINGS['model']
             }
             
@@ -123,10 +128,20 @@ class GeminiAnalyzer:
             
         except Exception as e:
             logging.error(f"分析 {ticker} 時發生錯誤: {e}")
+            # 報告錯誤並嘗試切換 Key
+            report_gemini_error(f"分析 {ticker} 失敗: {e}")
+            
+            # 嘗試重新初始化 Gemini 以使用新的 Key
+            try:
+                self._setup_gemini()
+                logging.info(f"已切換到新的 API Key，重新嘗試分析 {ticker}")
+            except Exception as setup_error:
+                logging.error(f"重新初始化 Gemini 失敗: {setup_error}")
+            
             return {
                 'ticker': ticker,
                 'error': str(e),
-                'analysis_timestamp': pd.Timestamp.now()
+                'analysis_timestamp': pd.Timestamp.now().isoformat()
             }
     
     def _parse_analysis_text(self, analysis_text: str) -> Dict[str, str]:
@@ -202,7 +217,7 @@ class GeminiAnalyzer:
                 analysis_results.append({
                     'ticker': ticker,
                     'error': str(e),
-                    'analysis_timestamp': pd.Timestamp.now()
+                    'analysis_timestamp': pd.Timestamp.now().isoformat()
                 })
                 continue
         
@@ -213,14 +228,14 @@ class GeminiAnalyzer:
                                analysis_data: Dict[str, Any]) -> Dict[str, Any]:
         """建立綜合投資報告"""
         ticker = stock_data.get('ticker', 'Unknown')
-        company_name = stock_data.get('company_name', 'Unknown Company')
+        company_name = stock_data.get('company_name') or stock_data.get('name', ticker)
         
         # 基本資訊
         basic_info = {
             'ticker': ticker,
             'company_name': company_name,
-            'sector': stock_data.get('sector', 'Unknown'),
-            'industry': stock_data.get('industry', 'Unknown'),
+            'sector': stock_data.get('sector', '未分類'),
+            'industry': stock_data.get('industry', '未分類'),
             'market_cap': stock_data.get('market_cap'),
             'current_price': stock_data.get('current_price'),
         }
@@ -254,7 +269,7 @@ class GeminiAnalyzer:
             'basic_info': basic_info,
             'key_metrics': key_metrics,
             'gemini_analysis': gemini_analysis,
-            'report_generated': pd.Timestamp.now()
+            'report_generated': pd.Timestamp.now().isoformat()
         }
         
         return investment_report
@@ -312,6 +327,7 @@ class GeminiAnalyzer:
         
         # JSON 格式（保持結構）
         with open(f"{base_path}.json", 'w', encoding='utf-8') as f:
-            json.dump(analysis_results, f, ensure_ascii=False, indent=2, default=str)
+            from src.utils import DateTimeEncoder
+            json.dump(analysis_results, f, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
         
         logging.info(f"分析結果已保存到: {base_path}.csv 和 {base_path}.json")
