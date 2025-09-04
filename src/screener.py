@@ -8,7 +8,7 @@ import numpy as np
 import logging
 from typing import Dict, List, Tuple, Any
 from config.settings import SCREENING_CRITERIA
-from src.utils import format_currency, format_percentage, format_ratio
+from src.utils import format_currency, format_percentage, format_ratio, DateTimeEncoder
 from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
 from src.stock_individual_analyzer import StockIndividualAnalyzer
 
@@ -709,8 +709,12 @@ class ValueScreener:
             # 如果沒有股票代號，創建一個
             scored_df['ticker'] = scored_df.index.astype(str)
         
+        # 確保有公司名稱欄位
         for col in ['company_name', 'name']:
             if col in scored_df.columns:
+                # 填補空值
+                ticker_col = 'ticker' if 'ticker' in scored_df.columns else 'symbol'
+                scored_df[col] = scored_df[col].fillna(scored_df[ticker_col])
                 break
         else:
             # 如果沒有公司名稱，使用股票代號
@@ -1011,7 +1015,7 @@ class ValueScreener:
         }
         
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(export_data, f, ensure_ascii=False, indent=2)
+            json.dump(export_data, f, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
         
         logging.info(f"篩選標準已匯出到: {filepath}")
     

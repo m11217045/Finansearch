@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 
 # 導入自訂模組
-from src.utils import setup_logging, load_env_variables, create_output_directory, save_dataframe
+from src.utils import setup_logging, load_env_variables, create_output_directory, save_dataframe, DateTimeEncoder
 from src.data_fetcher import SP500DataFetcher
 from src.screener import ValueScreener
 from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate  # 使用增強版分析器
@@ -84,7 +84,7 @@ def main():
         # 建立篩選摘要
         screening_summary = screener.screening_results
         with open(f"{output_dir}/screening_summary.json", 'w', encoding='utf-8') as f:
-            json.dump(screening_summary, f, ensure_ascii=False, indent=2)
+            json.dump(screening_summary, f, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
         
         logger.info(f"價值投資排名完成，獲得前 {len(screened_data)} 支被低估股票")
         

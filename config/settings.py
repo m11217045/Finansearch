@@ -41,6 +41,8 @@ MULTI_AGENT_SETTINGS = {
     'consensus_threshold': 0.7,   # 共識閾值
     'debate_timeout': 300,        # 辯論超時時間（秒）
     'enable_debate': True,        # 是否啟用多代理人辯論
+    'max_concurrent_analysis': 5, # 最大並發分析數（Agent 並發）
+    'enable_concurrent': True,    # 是否啟用並發分析
 }
 
 # 新聞和情緒分析設定

@@ -12,6 +12,8 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import yfinance as yf
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from config.settings import GEMINI_SETTINGS, API_SETTINGS, NEWS_SETTINGS, MULTI_AGENT_SETTINGS
 from src.utils import load_env_variables, retry_on_failure
 
@@ -423,7 +425,7 @@ class EnhancedStockAnalyzer:
                         'summary': summary,
                         'publisher': publisher,
                         'publish_time': publish_time,
-                        'publish_timestamp': publish_timestamp,  # 保持為 datetime 物件
+                        'publish_timestamp': publish_timestamp.isoformat() if publish_timestamp else None,  # 轉換為 ISO 字符串
                         'url': url,
                         'source': 'Yahoo Finance',
                         'content': '',  # 將在後續填充
@@ -521,6 +523,13 @@ class EnhancedStockAnalyzer:
     def _get_company_name(self, ticker: str) -> Optional[str]:
         """獲取公司名稱用於新聞搜尋"""
         try:
+            # 優先使用暫存的股票資料
+            if hasattr(self, '_current_stock_data') and self._current_stock_data:
+                company_name = (self._current_stock_data.get('company_name') or 
+                              self._current_stock_data.get('name'))
+                if company_name and company_name != ticker:
+                    return company_name
+            
             # 嘗試從 yfinance 獲取公司名稱
             stock = yf.Ticker(ticker)
             info = stock.info
@@ -1077,7 +1086,13 @@ class EnhancedStockAnalyzer:
     def analyze_stock_comprehensive(self, stock_data: Dict) -> Dict[str, Any]:
         """執行股票的綜合分析"""
         try:
-            ticker = stock_data.get('symbol', 'Unknown')
+            ticker = stock_data.get('symbol') or stock_data.get('ticker')
+            if not ticker:
+                raise ValueError("股票資料中缺少股票代碼")
+            
+            # 暫存股票資料以供其他方法使用
+            self._current_stock_data = stock_data
+            
             logging.info(f"開始綜合分析 {ticker}...")
             
             # 1. 獲取新聞數據
@@ -1108,11 +1123,21 @@ class EnhancedStockAnalyzer:
             
             # 將新聞數據添加到報告中
             comprehensive_report['news_data'] = news_data
+            
+            # 清理暫存資料
+            if hasattr(self, '_current_stock_data'):
+                delattr(self, '_current_stock_data')
+            
             return comprehensive_report
             
         except Exception as e:
-            logging.error(f"綜合分析 {stock_data.get('symbol', 'Unknown')} 失敗: {e}")
-            return {'error': str(e), 'ticker': stock_data.get('symbol', 'Unknown')}
+            # 清理暫存資料
+            if hasattr(self, '_current_stock_data'):
+                delattr(self, '_current_stock_data')
+            
+            ticker_for_error = stock_data.get('symbol') or stock_data.get('ticker', '未知股票')
+            logging.error(f"綜合分析 {ticker_for_error} 失敗: {e}")
+            return {'error': str(e), 'ticker': ticker_for_error}
 
     def generate_comprehensive_report(self, stock_data: Dict, news_data: List[Dict], 
                                     sentiment_data: Dict, news_sentiment: Dict) -> Dict[str, Any]:
@@ -1806,6 +1831,136 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         ]
         return agents
     
+    def _analyze_agent_concurrent(self, agent, stock_data, context, round_type, agent_index, total_agents, stock_symbol):
+        """並發執行單個 Agent 分析的輔助方法"""
+        try:
+            # 更新當前分析的專家（線程安全）
+            if self.status_manager:
+                self.status_manager.update_status(
+                    agent=self._map_agent_to_key(agent.name),
+                    step=f'專家分析 ({agent_index+1}/{total_agents})',
+                    message=f'{agent.name} 正在分析 {stock_symbol}...',
+                    progress=55 + (agent_index * 5)
+                )
+            
+            # 執行分析
+            analysis_result = agent.analyze(stock_data, context, round_type)
+            
+            # 添加 agent 名稱到結果中
+            analysis_result['agent_name'] = agent.name
+            analysis_result['agent_index'] = agent_index
+            
+            return analysis_result
+        
+        except Exception as e:
+            logging.error(f"{agent.name} 並發分析失敗: {e}")
+            return {
+                'agent_name': agent.name,
+                'agent_index': agent_index,
+                'recommendation': 'HOLD',
+                'confidence': 0,
+                'analysis': f'分析失敗: {e}',
+                'risk_level': 'UNKNOWN',
+                'error': str(e)
+            }
+    
+    def _analyze_agents_concurrently(self, stock_data, context="", round_type="initial", max_workers=None):
+        """並發執行多個 Agent 分析"""
+        if not self.agents:
+            return {}
+        
+        # 檢查是否啟用並發模式
+        if not MULTI_AGENT_SETTINGS.get('enable_concurrent', True):
+            logging.info("並發模式未啟用，使用順序執行")
+            return self._analyze_agents_sequentially(stock_data, context, round_type)
+        
+        # 設定最大執行緒數，預設為 Agent 數量但不超過設定值
+        if max_workers is None:
+            max_workers = min(len(self.agents), MULTI_AGENT_SETTINGS.get('max_concurrent_analysis', 3))
+        
+        stock_symbol = stock_data.get('symbol', 'Unknown')
+        results = {}
+        
+        logging.info(f"使用並發模式分析，最大執行緒數: {max_workers}")
+        
+        # 使用 ThreadPoolExecutor 進行並發分析
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有 Agent 分析任務
+            future_to_agent = {
+                executor.submit(
+                    self._analyze_agent_concurrent,
+                    agent, stock_data, context, round_type,
+                    i, len(self.agents), stock_symbol
+                ): agent for i, agent in enumerate(self.agents)
+            }
+            
+            # 收集結果
+            completed_count = 0
+            for future in as_completed(future_to_agent):
+                agent = future_to_agent[future]
+                completed_count += 1
+                
+                try:
+                    result = future.result()
+                    agent_name = result.pop('agent_name')
+                    agent_index = result.pop('agent_index', 0)
+                    results[agent_name] = result
+                    
+                    logging.info(f"完成 {agent_name} 分析 ({completed_count}/{len(self.agents)})")
+                    
+                except Exception as e:
+                    logging.error(f"{agent.name} 並發分析任務失敗: {e}")
+                    results[agent.name] = {
+                        'recommendation': 'HOLD',
+                        'confidence': 0,
+                        'analysis': f'任務失敗: {e}',
+                        'risk_level': 'UNKNOWN',
+                        'error': str(e)
+                    }
+        
+        return results
+    
+    def _analyze_agents_sequentially(self, stock_data, context="", round_type="initial"):
+        """順序執行多個 Agent 分析（備用方法）"""
+        if not self.agents:
+            return {}
+        
+        stock_symbol = stock_data.get('symbol', 'Unknown')
+        results = {}
+        
+        logging.info("使用順序模式分析")
+        
+        for i, agent in enumerate(self.agents):
+            try:
+                # 更新當前分析的專家
+                if self.status_manager:
+                    self.status_manager.update_status(
+                        agent=self._map_agent_to_key(agent.name),
+                        step=f'專家分析 ({i+1}/{len(self.agents)})',
+                        message=f'{agent.name} 正在分析 {stock_symbol}...',
+                        progress=55 + (i * 5)
+                    )
+                
+                analysis_result = agent.analyze(stock_data, context, round_type)
+                results[agent.name] = analysis_result
+                
+                logging.info(f"完成 {agent.name} 分析 ({i+1}/{len(self.agents)})")
+                
+                # API 限制延遲
+                time.sleep(GEMINI_SETTINGS.get('rate_limit_delay', 3))
+                
+            except Exception as e:
+                logging.error(f"{agent.name} 分析失敗: {e}")
+                results[agent.name] = {
+                    'recommendation': 'HOLD',
+                    'confidence': 0,
+                    'analysis': f'分析失敗: {e}',
+                    'risk_level': 'UNKNOWN',
+                    'error': str(e)
+                }
+        
+        return results
+    
     def _map_agent_to_key(self, agent_name: str) -> str:
         """將代理人名稱映射到狀態管理器的鍵值"""
         agent_mapping = {
@@ -1891,34 +2046,54 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
             'timestamp': datetime.now().isoformat()
         }
         
-        # 第一輪：各代理人獨立分析
-        logging.info("第一輪：各代理人獨立分析")
+        # 第一輪：各代理人獨立分析（並發執行）
+        logging.info("第一輪：各代理人獨立分析（並發模式）")
         
         if self.status_manager:
             self.status_manager.update_status(
                 agent='research_manager',
                 step='專家獨立分析',
-                message=f'各領域專家正在獨立分析 {stock_symbol}...',
+                message=f'各領域專家正在並發分析 {stock_symbol}...',
                 progress=55
             )
         
-        for i, agent in enumerate(self.agents):
+        # 使用並發分析方法
+        start_time = time.time()
+        concurrent_results = self._analyze_agents_concurrently(stock_data, "", "initial")
+        end_time = time.time()
+        
+        logging.info(f"並發分析完成，耗時: {end_time - start_time:.2f} 秒")
+        
+        # 處理並發分析結果
+        for agent_name, analysis_result in concurrent_results.items():
             try:
-                # 更新當前分析的專家
-                if self.status_manager:
-                    agent_key = agent.name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
-                    self.status_manager.update_status(
-                        agent=self._map_agent_to_key(agent.name),
-                        step=f'專家分析 ({i+1}/{len(self.agents)})',
-                        message=f'{agent.name} 正在分析 {stock_symbol}...',
-                        progress=55 + (i * 5)
-                    )
+                # 保存初始分析和最終分析位置
+                debate_result['agents_analysis'][agent_name] = {
+                    'initial_recommendation': analysis_result.get('recommendation', 'HOLD'),
+                    'initial_confidence': analysis_result.get('confidence', 5),
+                    'initial_reasoning': analysis_result.get('analysis', ''),
+                    'initial_risk_level': analysis_result.get('risk_level', 'MEDIUM'),
+                    'recommendation': analysis_result.get('recommendation', 'HOLD'),  # 會在辯論後更新
+                    'confidence': analysis_result.get('confidence', 5),  # 會在辯論後更新
+                    'reasoning': analysis_result.get('analysis', ''),  # 會在辯論後更新
+                    'risk_level': analysis_result.get('risk_level', 'MEDIUM'),  # 會在辯論後更新
+                    'position_change_reason': ''  # 辯論後如有變化會填入
+                }
                 
-                analysis = agent.analyze(stock_data, "", "initial")
-                debate_result['agents_analysis'][agent.name] = analysis
-                time.sleep(GEMINI_SETTINGS.get('rate_limit_delay', 3))  # API 限制
             except Exception as e:
-                logging.error(f"{agent.name} 分析失敗: {e}")
+                logging.error(f"處理 {agent_name} 分析結果失敗: {e}")
+                # 即使失敗也要有基本結構
+                debate_result['agents_analysis'][agent_name] = {
+                    'initial_recommendation': 'HOLD',
+                    'initial_confidence': 0,
+                    'initial_reasoning': f'結果處理失敗: {e}',
+                    'initial_risk_level': 'UNKNOWN',
+                    'recommendation': 'HOLD',
+                    'confidence': 0,
+                    'reasoning': f'結果處理失敗: {e}',
+                    'risk_level': 'UNKNOWN',
+                    'position_change_reason': ''
+                }
         
         # 進行辯論輪次
         context = self._build_context_from_analyses(debate_result['agents_analysis'])
@@ -1937,6 +2112,31 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
             round_result = self._conduct_debate_round(stock_data, context, round_num)
             debate_result['debate_rounds'].append(round_result)
             context = self._update_context(context, round_result)
+        
+        # 更新每個agent的最終立場
+        if debate_result['debate_rounds']:
+            final_round = debate_result['debate_rounds'][-1]
+            for agent_name, final_response in final_round.get('agent_responses', {}).items():
+                if agent_name in debate_result['agents_analysis']:
+                    agent_data = debate_result['agents_analysis'][agent_name]
+                    
+                    # 保存最終立場
+                    initial_rec = agent_data.get('initial_recommendation', 'HOLD')
+                    final_rec = final_response.get('recommendation', 'HOLD')
+                    
+                    agent_data['recommendation'] = final_rec
+                    agent_data['confidence'] = final_response.get('confidence', 5)
+                    agent_data['reasoning'] = final_response.get('analysis', '')
+                    agent_data['risk_level'] = final_response.get('risk_level', 'MEDIUM')
+                    
+                    # 分析立場變化原因
+                    if initial_rec != final_rec:
+                        change_analysis = self._analyze_position_change(
+                            agent_name, initial_rec, final_rec,
+                            agent_data.get('initial_reasoning', ''),
+                            agent_data.get('reasoning', '')
+                        )
+                        agent_data['position_change_reason'] = change_analysis
         
         # 統計投票結果
         if self.status_manager:
@@ -1996,13 +2196,19 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
 請保持專業理性，並基於價值投資原則進行分析。
 """
         
-        for agent in self.agents:
-            try:
-                response = agent.analyze(stock_data, debate_context, "debate")
-                round_result['agent_responses'][agent.name] = response
-                time.sleep(GEMINI_SETTINGS.get('rate_limit_delay', 3))
-            except Exception as e:
-                logging.error(f"{agent.name} 第{round_num}輪辯論失敗: {e}")
+        # 使用並發分析進行辯論輪次
+        start_time = time.time()
+        concurrent_responses = self._analyze_agents_concurrently(stock_data, debate_context, "debate")
+        end_time = time.time()
+        
+        logging.info(f"第{round_num}輪辯論並發執行完成，耗時: {end_time - start_time:.2f} 秒")
+        
+        # 整理並發結果
+        for agent_name, response in concurrent_responses.items():
+            if 'error' not in response:
+                round_result['agent_responses'][agent_name] = response
+            else:
+                logging.error(f"{agent_name} 第{round_num}輪辯論失敗: {response.get('error', 'Unknown error')}")
         
         return round_result
     
@@ -2015,6 +2221,43 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
             new_context += f"\n【{agent_name}】更新觀點：{recommendation} (信心度: {confidence}/10)\n"
             new_context += f"主要論點: {response.get('analysis', 'N/A')[:150]}...\n"
         return new_context
+    
+    def _analyze_position_change(self, agent_name: str, initial_rec: str, final_rec: str, 
+                                initial_reasoning: str, final_reasoning: str) -> str:
+        """分析專家立場變化的原因"""
+        if initial_rec == final_rec:
+            return "立場保持一致"
+        
+        change_map = {
+            ('BUY', 'HOLD'): "從看好轉為保守",
+            ('BUY', 'SELL'): "從看好轉為看空", 
+            ('HOLD', 'BUY'): "從保守轉為看好",
+            ('HOLD', 'SELL'): "從保守轉為看空",
+            ('SELL', 'HOLD'): "從看空轉為保守", 
+            ('SELL', 'BUY'): "從看空轉為看好"
+        }
+        
+        change_desc = change_map.get((initial_rec, final_rec), f"從{initial_rec}改為{final_rec}")
+        
+        # 簡單的關鍵詞分析來推測變化原因
+        reasoning_keywords = {
+            '風險': '風險考量',
+            '估值': '估值重新評估', 
+            '財務': '財務狀況變化',
+            '市場': '市場環境變化',
+            '競爭': '競爭格局考量',
+            '成長': '成長前景重評'
+        }
+        
+        reasons = []
+        for keyword, reason in reasoning_keywords.items():
+            if keyword in final_reasoning and keyword not in initial_reasoning:
+                reasons.append(reason)
+        
+        if reasons:
+            return f"{change_desc}，主要因為：{', '.join(reasons[:2])}"
+        else:
+            return f"{change_desc}，基於辯論中的新觀點"
     
     def _calculate_voting_results(self, initial_analyses: Dict, debate_rounds: List) -> Dict:
         """計算投票結果"""

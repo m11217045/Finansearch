@@ -40,9 +40,9 @@ class GeminiAnalyzer:
     def create_analysis_prompt(self, stock_data: Dict[str, Any]) -> str:
         """建立股票分析提示詞"""
         ticker = stock_data.get('ticker', 'Unknown')
-        company_name = stock_data.get('company_name', 'Unknown Company')
-        sector = stock_data.get('sector', 'Unknown')
-        industry = stock_data.get('industry', 'Unknown')
+        company_name = stock_data.get('company_name') or stock_data.get('name', ticker)
+        sector = stock_data.get('sector', '未分類')
+        industry = stock_data.get('industry', '未分類')
         
         # 格式化財務數據
         market_cap = format_currency(stock_data.get('market_cap'))
@@ -113,9 +113,9 @@ class GeminiAnalyzer:
             
             analysis_result = {
                 'ticker': ticker,
-                'company_name': stock_data.get('company_name', 'Unknown'),
+                'company_name': stock_data.get('company_name') or stock_data.get('name', ticker),
                 'analysis_text': response.text,
-                'analysis_timestamp': pd.Timestamp.now(),
+                'analysis_timestamp': pd.Timestamp.now().isoformat(),
                 'model_used': GEMINI_SETTINGS['model']
             }
             
@@ -141,7 +141,7 @@ class GeminiAnalyzer:
             return {
                 'ticker': ticker,
                 'error': str(e),
-                'analysis_timestamp': pd.Timestamp.now()
+                'analysis_timestamp': pd.Timestamp.now().isoformat()
             }
     
     def _parse_analysis_text(self, analysis_text: str) -> Dict[str, str]:
@@ -217,7 +217,7 @@ class GeminiAnalyzer:
                 analysis_results.append({
                     'ticker': ticker,
                     'error': str(e),
-                    'analysis_timestamp': pd.Timestamp.now()
+                    'analysis_timestamp': pd.Timestamp.now().isoformat()
                 })
                 continue
         
@@ -228,14 +228,14 @@ class GeminiAnalyzer:
                                analysis_data: Dict[str, Any]) -> Dict[str, Any]:
         """建立綜合投資報告"""
         ticker = stock_data.get('ticker', 'Unknown')
-        company_name = stock_data.get('company_name', 'Unknown Company')
+        company_name = stock_data.get('company_name') or stock_data.get('name', ticker)
         
         # 基本資訊
         basic_info = {
             'ticker': ticker,
             'company_name': company_name,
-            'sector': stock_data.get('sector', 'Unknown'),
-            'industry': stock_data.get('industry', 'Unknown'),
+            'sector': stock_data.get('sector', '未分類'),
+            'industry': stock_data.get('industry', '未分類'),
             'market_cap': stock_data.get('market_cap'),
             'current_price': stock_data.get('current_price'),
         }
@@ -269,7 +269,7 @@ class GeminiAnalyzer:
             'basic_info': basic_info,
             'key_metrics': key_metrics,
             'gemini_analysis': gemini_analysis,
-            'report_generated': pd.Timestamp.now()
+            'report_generated': pd.Timestamp.now().isoformat()
         }
         
         return investment_report

@@ -231,12 +231,18 @@ class MultiMarketDataFetcher:
                 return None
             
             # 構建股票數據字典
+            # 優先使用 longName，然後 shortName，最後使用 ticker
+            company_name = (info.get('longName') or 
+                          info.get('shortName') or 
+                          ticker)
+            
             stock_data = {
                 'symbol': ticker,
                 'ticker': ticker,  # 為了向後兼容
-                'name': info.get('longName', ticker),
-                'sector': info.get('sector', 'Unknown'),
-                'industry': info.get('industry', 'Unknown'),
+                'name': company_name,
+                'company_name': company_name,  # 直接添加 company_name 欄位
+                'sector': info.get('sector', '未分類'),
+                'industry': info.get('industry', '未分類'),
                 'market_cap': info.get('marketCap'),
                 'current_price': info.get('regularMarketPrice'),
                 'pe_ratio': info.get('trailingPE'),
