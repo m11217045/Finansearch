@@ -7,7 +7,6 @@ import pandas as pd
 import numpy as np
 import logging
 from typing import Dict, List, Tuple, Any
-from config.settings import SCREENING_CRITERIA
 from src.utils import format_currency, format_percentage, format_ratio, DateTimeEncoder
 from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
 from src.stock_individual_analyzer import StockIndividualAnalyzer
@@ -16,9 +15,8 @@ from src.stock_individual_analyzer import StockIndividualAnalyzer
 class ValueScreener:
     """價值投資股票篩選器"""
     
-    def __init__(self, criteria: Dict[str, float] = None):
-        self.criteria = criteria or SCREENING_CRITERIA
-        self.screening_results = {}
+    def __init__(self):
+        pass
         self.enhanced_analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=False)
         self.individual_analyzer = StockIndividualAnalyzer()
     
@@ -786,8 +784,20 @@ class ValueScreener:
         return result_df
 
     def apply_basic_screening(self, df: pd.DataFrame) -> pd.DataFrame:
-        """保留原有的基本篩選功能以向後兼容"""
-        logging.info("使用基本篩選標準（建議使用 get_top_undervalued_stocks 方法）...")
+        """
+        [已廢棄] 保留原有的基本篩選功能以向後兼容
+        
+        注意：此方法已不推薦使用，建議使用 get_top_undervalued_stocks 方法
+        新系統採用動態排名制度，不使用固定閾值篩選
+        """
+        import warnings
+        warnings.warn(
+            "apply_basic_screening 方法已廢棄，請使用 get_top_undervalued_stocks",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
+        logging.warning("使用已廢棄的基本篩選標準（建議使用 get_top_undervalued_stocks 方法）...")
         
         # 簡單的基本篩選，主要是排除無效數據
         screened_df = df.copy()
@@ -807,7 +817,18 @@ class ValueScreener:
         return screened_df
     
     def calculate_value_scores(self, df: pd.DataFrame) -> pd.DataFrame:
-        """計算價值投資評分"""
+        """
+        [已廢棄] 計算價值投資評分
+        
+        注意：此方法使用固定評分標準，已被動態排名系統取代
+        請使用 calculate_value_score() 方法（無s）
+        """
+        import warnings
+        warnings.warn(
+            "calculate_value_scores 方法已廢棄，請使用 calculate_value_score",
+            DeprecationWarning,
+            stacklevel=2
+        )
         df = df.copy()
         
         # 定義評分權重

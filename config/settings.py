@@ -2,15 +2,6 @@
 設定檔 - 包含所有系統設定參數
 """
 
-# 價值投資篩選標準 (部分項目僅為向後兼容，實際使用排名系統)
-SCREENING_CRITERIA = {
-    'pe_ratio_max': 20,           # 本益比上限 (僅用於界面顯示)
-    'pb_ratio_max': 2,            # 市淨率上限 (僅用於界面顯示)
-    'dividend_yield_min': 0.03,   # 股息殖利率下限 (已停用，保留以避免錯誤)
-    'debt_to_equity_max': 1.5,    # 債務權益比上限 (僅用於界面顯示)
-    'market_cap_min': 1_000_000_000,  # 市值下限 (10億美元)
-}
-
 # API 設定 - 基於 Yahoo Finance 每秒最多 30 次請求的限制
 API_SETTINGS = {
     'request_delay': 0.05,            # API 請求間隔 (秒) - 50ms，約每秒20次請求 (低於30次限制)
@@ -73,9 +64,9 @@ NEWS_SETTINGS = {
 
 # 綜合分析設定
 ANALYSIS_SETTINGS = {
-    'fundamental_weight': 0.25,   # 基本面權重
-    'technical_weight': 0.25,     # 技術面權重  
-    'news_weight': 0.5,           # 新聞面權重
+    'fundamental_weight': 0.4,    # 基本面權重 (40%)
+    'technical_weight': 0.3,      # 技術面權重 (30%)
+    'news_weight': 0.3,           # 新聞面權重 (30%)
     'enable_ai_analysis': True,   # 是否啟用AI分析
     'max_concurrent_analysis': 3, # 最大並發分析數
 }

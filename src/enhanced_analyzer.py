@@ -1124,6 +1124,18 @@ class EnhancedStockAnalyzer:
             # 將新聞數據添加到報告中
             comprehensive_report['news_data'] = news_data
             
+            # 自動儲存分析報告為MD檔
+            try:
+                md_filepath = self.save_analysis_report_as_markdown(
+                    comprehensive_report, 
+                    f"stock_analysis_{ticker}"
+                )
+                if md_filepath:
+                    comprehensive_report['markdown_report_path'] = md_filepath
+                    logging.info(f"已為 {ticker} 生成MD分析報告: {md_filepath}")
+            except Exception as md_error:
+                logging.warning(f"無法為 {ticker} 生成MD報告: {md_error}")
+            
             # 清理暫存資料
             if hasattr(self, '_current_stock_data'):
                 delattr(self, '_current_stock_data')
@@ -1155,12 +1167,12 @@ class EnhancedStockAnalyzer:
             # 新聞面評分
             news_score = self._calculate_news_score(news_sentiment)
             
-            # 綜合評分 (使用新的權重: 基本面25%, 技術面25%, 新聞面50%)
+            # 綜合評分 (權重配置: 基本面40%, 技術面30%, 新聞面30%)
             from config.settings import ANALYSIS_SETTINGS
             
-            fundamental_weight = ANALYSIS_SETTINGS.get('fundamental_weight', 0.25)
-            technical_weight = ANALYSIS_SETTINGS.get('technical_weight', 0.25)
-            news_weight = ANALYSIS_SETTINGS.get('news_weight', 0.5)
+            fundamental_weight = ANALYSIS_SETTINGS.get('fundamental_weight', 0.4)
+            technical_weight = ANALYSIS_SETTINGS.get('technical_weight', 0.3)
+            news_weight = ANALYSIS_SETTINGS.get('news_weight', 0.3)
             
             overall_score = (
                 fundamental_score * fundamental_weight + 
@@ -1534,6 +1546,481 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logging.error(f"保存分析結果失敗: {e}")
             return None
+    
+    def save_analysis_report_as_markdown(self, analysis_result: Dict, filename_prefix: str = "ai_analysis_report") -> str:
+        """將AI分析報告儲存為Markdown檔案"""
+        try:
+            import os
+            
+            output_dir = "data/output"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{filename_prefix}_{timestamp}.md"
+            filepath = os.path.join(output_dir, filename)
+            
+            # 生成Markdown內容
+            markdown_content = self._generate_markdown_report(analysis_result)
+            
+            # 寫入檔案
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
+            
+            logging.info(f"AI分析報告已保存為MD檔: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logging.error(f"保存MD報告失敗: {e}")
+            return None
+    
+    def _generate_markdown_report(self, analysis_result: Dict) -> str:
+        """生成Markdown格式的分析報告"""
+        if not analysis_result or 'error' in analysis_result:
+            return f"# 分析報告錯誤\n\n錯誤訊息: {analysis_result.get('error', '未知錯誤')}"
+        
+        # 基本資訊
+        ticker = analysis_result.get('ticker', 'N/A')
+        company_name = analysis_result.get('company_name', 'N/A')
+        analysis_date = analysis_result.get('analysis_date', 'N/A')
+        overall_score = analysis_result.get('overall_score', 0)
+        investment_recommendation = analysis_result.get('investment_recommendation', 'N/A')
+        
+        # 開始生成Markdown內容
+        md_content = []
+        
+        # 標題和基本資訊
+        md_content.append(f"# 🤖 AI股票分析報告")
+        md_content.append("")
+        md_content.append(f"**股票代碼:** {ticker}")
+        md_content.append(f"**公司名稱:** {company_name}")
+        md_content.append(f"**分析時間:** {analysis_date}")
+        md_content.append(f"**綜合評分:** {overall_score}/100")
+        md_content.append(f"**投資建議:** {investment_recommendation}")
+        md_content.append("")
+        md_content.append("---")
+        md_content.append("")
+        
+        # 關鍵指標摘要
+        if 'key_metrics' in analysis_result:
+            md_content.append("## 📊 關鍵指標摘要")
+            md_content.append("")
+            
+            metrics = analysis_result['key_metrics']
+            
+            # 表格格式顯示關鍵指標
+            md_content.append("| 指標 | 數值 |")
+            md_content.append("|------|------|")
+            
+            if metrics.get('current_price'):
+                md_content.append(f"| 當前股價 | ${metrics['current_price']:.2f} |")
+            
+            if metrics.get('market_cap'):
+                market_cap_b = metrics['market_cap'] / 1e9
+                md_content.append(f"| 市值 | ${market_cap_b:.1f}B |")
+            
+            if metrics.get('pe_ratio'):
+                md_content.append(f"| 本益比 (P/E) | {metrics['pe_ratio']:.2f} |")
+            
+            if metrics.get('pb_ratio'):
+                md_content.append(f"| 股價淨值比 (P/B) | {metrics['pb_ratio']:.2f} |")
+            
+            if metrics.get('rsi'):
+                md_content.append(f"| RSI | {metrics['rsi']:.1f} |")
+            
+            if metrics.get('52w_position'):
+                md_content.append(f"| 52週高點位置 | {metrics['52w_position']:.1%} |")
+            
+            md_content.append("")
+        
+        # 基本面分析
+        if 'fundamental_analysis' in analysis_result:
+            md_content.append("## 📈 基本面分析")
+            md_content.append("")
+            
+            fundamental = analysis_result['fundamental_analysis']
+            md_content.append(f"**評分:** {fundamental.get('score', 0)}/100")
+            md_content.append("")
+            
+            # 基本面指標表格
+            md_content.append("| 財務指標 | 數值 |")
+            md_content.append("|----------|------|")
+            
+            if fundamental.get('pe_ratio'):
+                md_content.append(f"| 本益比 | {fundamental['pe_ratio']:.2f} |")
+            
+            if fundamental.get('pb_ratio'):
+                md_content.append(f"| 股價淨值比 | {fundamental['pb_ratio']:.2f} |")
+            
+            if fundamental.get('debt_ratio'):
+                md_content.append(f"| 負債比率 | {fundamental['debt_ratio']:.2f} |")
+            
+            if fundamental.get('roe'):
+                md_content.append(f"| 股東權益報酬率 (ROE) | {fundamental['roe']:.2%} |")
+            
+            if fundamental.get('profit_margin'):
+                md_content.append(f"| 利潤率 | {fundamental['profit_margin']:.2%} |")
+            
+            md_content.append("")
+        
+        # 技術面分析
+        if 'technical_analysis' in analysis_result:
+            md_content.append("## 📊 技術面分析")
+            md_content.append("")
+            
+            technical = analysis_result['technical_analysis']
+            md_content.append(f"**評分:** {technical.get('score', 0)}/100")
+            md_content.append("")
+            
+            md_content.append("| 技術指標 | 狀態 |")
+            md_content.append("|----------|------|")
+            
+            if technical.get('trend'):
+                md_content.append(f"| 趨勢方向 | {technical['trend']} |")
+            
+            if technical.get('rsi'):
+                rsi_status = "超買" if technical['rsi'] > 70 else "超賣" if technical['rsi'] < 30 else "正常"
+                md_content.append(f"| RSI ({technical['rsi']:.1f}) | {rsi_status} |")
+            
+            if technical.get('volume_signal'):
+                md_content.append(f"| 成交量訊號 | {technical['volume_signal']} |")
+            
+            if technical.get('price_momentum'):
+                md_content.append(f"| 價格動能 (20日) | {technical['price_momentum']:.2%} |")
+            
+            if technical.get('volatility'):
+                md_content.append(f"| 波動度 | {technical['volatility']:.2%} |")
+            
+            md_content.append("")
+        
+        # 新聞情緒分析
+        if 'news_sentiment_analysis' in analysis_result:
+            md_content.append("## 📰 新聞情緒分析")
+            md_content.append("")
+            
+            news = analysis_result['news_sentiment_analysis']
+            md_content.append(f"**評分:** {news.get('score', 0)}/100")
+            md_content.append(f"**情緒傾向:** {news.get('sentiment', 'neutral')}")
+            md_content.append(f"**信心度:** {news.get('confidence', 0):.1%}")
+            md_content.append(f"**情緒強度:** {news.get('sentiment_strength', 0):.1f}")
+            md_content.append(f"**新聞數量:** {news.get('news_count', 0)} 則")
+            md_content.append("")
+            
+            # 關鍵主題
+            if news.get('key_themes'):
+                md_content.append("### 🔍 關鍵主題")
+                for theme in news['key_themes']:
+                    md_content.append(f"- {theme}")
+                md_content.append("")
+            
+            # 風險因素
+            if news.get('risk_factors'):
+                md_content.append("### ⚠️ 風險因素")
+                for risk in news['risk_factors']:
+                    md_content.append(f"- {risk}")
+                md_content.append("")
+            
+            # 投資機會
+            if news.get('opportunities'):
+                md_content.append("### 💡 投資機會")
+                for opportunity in news['opportunities']:
+                    md_content.append(f"- {opportunity}")
+                md_content.append("")
+            
+            # 投資策略建議
+            if news.get('investment_strategy'):
+                md_content.append("### 🎯 投資策略建議")
+                md_content.append(news['investment_strategy'])
+                md_content.append("")
+            
+            # 注意事項
+            if news.get('attention_points'):
+                md_content.append("### 📌 注意事項")
+                for point in news['attention_points']:
+                    md_content.append(f"- {point}")
+                md_content.append("")
+            
+            # 新聞標題
+            if news.get('news_titles'):
+                md_content.append("### 📑 相關新聞標題")
+                for i, title in enumerate(news['news_titles'][:10], 1):  # 最多顯示10則
+                    md_content.append(f"{i}. {title}")
+                md_content.append("")
+            
+            # 新聞智能報告
+            if news.get('news_intelligence_report'):
+                md_content.append("### 🧠 新聞智能分析")
+                md_content.append(news['news_intelligence_report'])
+                md_content.append("")
+        
+        # 風險評估
+        if 'risk_assessment' in analysis_result:
+            md_content.append("## ⚠️ 風險評估")
+            md_content.append("")
+            
+            risk = analysis_result['risk_assessment']
+            
+            md_content.append("| 風險類型 | 等級 |")
+            md_content.append("|----------|------|")
+            
+            if risk.get('volatility_risk'):
+                md_content.append(f"| 波動風險 | {risk['volatility_risk']} |")
+            
+            if risk.get('valuation_risk'):
+                md_content.append(f"| 估值風險 | {risk['valuation_risk']} |")
+            
+            if risk.get('news_risk'):
+                md_content.append(f"| 新聞風險 | {risk['news_risk']} |")
+            
+            if risk.get('overall_risk'):
+                md_content.append(f"| **整體風險** | **{risk['overall_risk']}** |")
+            
+            md_content.append("")
+        
+        # 多代理人辯論結果 (如果有的話)
+        if 'multi_agent_debate' in analysis_result:
+            md_content.append("## 🗣️ 多代理人辯論結果")
+            md_content.append("")
+            
+            debate = analysis_result['multi_agent_debate']
+            
+            if 'voting_results' in debate:
+                voting = debate['voting_results']
+                
+                md_content.append("### 投票結果")
+                md_content.append("")
+                md_content.append("| 建議 | 票數 |")
+                md_content.append("|------|------|")
+                md_content.append(f"| 買入 | {voting.get('buy_votes', 0)} |")
+                md_content.append(f"| 持有 | {voting.get('hold_votes', 0)} |")
+                md_content.append(f"| 賣出 | {voting.get('sell_votes', 0)} |")
+                md_content.append("")
+                md_content.append(f"**專家共識度:** {voting.get('consensus_level', 0):.1%}")
+                md_content.append("")
+                
+                # 專家最終立場
+                if 'agent_final_positions' in voting:
+                    md_content.append("### 專家最終立場")
+                    md_content.append("")
+                    
+                    for agent_name, position in voting['agent_final_positions'].items():
+                        agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
+                        rec = position.get('recommendation', 'UNKNOWN')
+                        confidence = position.get('confidence', 0)
+                        reasoning = position.get('final_reasoning', '')
+                        
+                        emoji = "🟢" if rec == "BUY" else "🟡" if rec == "HOLD" else "🔴" if rec == "SELL" else "❓"
+                        
+                        md_content.append(f"#### {emoji} {agent_display}")
+                        md_content.append(f"**建議:** {rec}")
+                        md_content.append(f"**信心度:** {confidence}/10")
+                        if reasoning:
+                            md_content.append(f"**理由:** {reasoning}")
+                        md_content.append("")
+        
+        # 結論
+        md_content.append("---")
+        md_content.append("")
+        md_content.append("## 📝 結論")
+        md_content.append("")
+        md_content.append(f"基於綜合分析，{company_name} ({ticker}) 獲得 **{overall_score}/100** 的評分，")
+        md_content.append(f"投資建議為：**{investment_recommendation}**")
+        md_content.append("")
+        md_content.append("⚠️ **免責聲明:** 本報告僅供參考，不構成投資建議。投資有風險，請謹慎決策。")
+        md_content.append("")
+        md_content.append(f"*報告生成時間: {analysis_date}*")
+        
+        return "\n".join(md_content)
+    
+    def save_portfolio_summary_as_markdown(self, portfolio_results: Dict, portfolio_name: str = "portfolio") -> str:
+        """將投資組合分析摘要儲存為Markdown檔案"""
+        try:
+            import os
+            
+            output_dir = "data/output"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{portfolio_name}_summary_{timestamp}.md"
+            filepath = os.path.join(output_dir, filename)
+            
+            # 生成投資組合摘要Markdown內容
+            markdown_content = self._generate_portfolio_summary_markdown(portfolio_results, portfolio_name)
+            
+            # 寫入檔案
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
+            
+            logging.info(f"投資組合摘要報告已保存為MD檔: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logging.error(f"保存投資組合MD摘要失敗: {e}")
+            return None
+    
+    def _generate_portfolio_summary_markdown(self, portfolio_results: Dict, portfolio_name: str) -> str:
+        """生成投資組合摘要Markdown格式報告"""
+        md_content = []
+        
+        # 標題
+        md_content.append(f"# 📊 投資組合分析摘要報告")
+        md_content.append("")
+        md_content.append(f"**投資組合:** {portfolio_name}")
+        md_content.append(f"**分析時間:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        md_content.append("")
+        md_content.append("---")
+        md_content.append("")
+        
+        # 分析統計
+        total_stocks = len(portfolio_results)
+        successful_analyses = len([r for r in portfolio_results.values() if r.get('status') == 'success'])
+        failed_analyses = total_stocks - successful_analyses
+        
+        md_content.append("## 📈 分析統計")
+        md_content.append("")
+        md_content.append("| 項目 | 數量 |")
+        md_content.append("|------|------|")
+        md_content.append(f"| 總股票數 | {total_stocks} |")
+        md_content.append(f"| 成功分析 | {successful_analyses} |")
+        md_content.append(f"| 分析失敗 | {failed_analyses} |")
+        md_content.append(f"| 成功率 | {(successful_analyses/total_stocks*100):.1f}% |")
+        md_content.append("")
+        
+        # 投資建議統計
+        recommendations = {}
+        risk_levels = {}
+        scores = []
+        
+        for ticker, result in portfolio_results.items():
+            if result.get('status') == 'success' and 'analysis' in result:
+                analysis = result['analysis']
+                
+                # 投資建議統計
+                rec = analysis.get('investment_recommendation', 'Unknown')
+                recommendations[rec] = recommendations.get(rec, 0) + 1
+                
+                # 風險等級統計
+                if 'risk_assessment' in analysis:
+                    risk = analysis['risk_assessment'].get('overall_risk', 'Unknown')
+                    risk_levels[risk] = risk_levels.get(risk, 0) + 1
+                
+                # 評分收集
+                score = analysis.get('overall_score', 0)
+                if score > 0:
+                    scores.append((ticker, score))
+        
+        # 投資建議分布
+        if recommendations:
+            md_content.append("## 💡 投資建議分布")
+            md_content.append("")
+            md_content.append("| 建議 | 股票數 | 佔比 |")
+            md_content.append("|------|--------|------|")
+            
+            for rec, count in sorted(recommendations.items(), key=lambda x: x[1], reverse=True):
+                percentage = (count / successful_analyses * 100)
+                md_content.append(f"| {rec} | {count} | {percentage:.1f}% |")
+            
+            md_content.append("")
+        
+        # 風險等級分布
+        if risk_levels:
+            md_content.append("## ⚠️ 風險等級分布")
+            md_content.append("")
+            md_content.append("| 風險等級 | 股票數 | 佔比 |")
+            md_content.append("|----------|--------|------|")
+            
+            for risk, count in sorted(risk_levels.items(), key=lambda x: x[1], reverse=True):
+                percentage = (count / successful_analyses * 100)
+                md_content.append(f"| {risk} | {count} | {percentage:.1f}% |")
+            
+            md_content.append("")
+        
+        # 排名前10的股票
+        if scores:
+            scores.sort(key=lambda x: x[1], reverse=True)
+            top_10 = scores[:10]
+            
+            md_content.append("## 🏆 評分排名前10")
+            md_content.append("")
+            md_content.append("| 排名 | 股票代碼 | 評分 | 建議 | 風險等級 |")
+            md_content.append("|------|----------|------|------|----------|")
+            
+            for i, (ticker, score) in enumerate(top_10, 1):
+                result = portfolio_results.get(ticker, {})
+                analysis = result.get('analysis', {})
+                rec = analysis.get('investment_recommendation', 'N/A')
+                risk = analysis.get('risk_assessment', {}).get('overall_risk', 'N/A')
+                
+                md_content.append(f"| {i} | {ticker} | {score:.1f} | {rec} | {risk} |")
+            
+            md_content.append("")
+        
+        # 詳細分析連結
+        md_content.append("## 📋 個股詳細分析")
+        md_content.append("")
+        md_content.append("以下為各股票的詳細分析連結：")
+        md_content.append("")
+        
+        for ticker, result in portfolio_results.items():
+            if result.get('status') == 'success' and 'analysis' in result:
+                analysis = result['analysis']
+                score = analysis.get('overall_score', 0)
+                rec = analysis.get('investment_recommendation', 'N/A')
+                
+                # 檢查是否有個別的MD報告
+                if 'markdown_report_path' in analysis:
+                    import os
+                    md_report_file = os.path.basename(analysis['markdown_report_path'])
+                    md_content.append(f"- **{ticker}** (評分: {score:.1f}, 建議: {rec}) - [詳細報告]({md_report_file})")
+                else:
+                    md_content.append(f"- **{ticker}** (評分: {score:.1f}, 建議: {rec})")
+        
+        md_content.append("")
+        
+        # 總結建議
+        md_content.append("## 📝 總結建議")
+        md_content.append("")
+        
+        if scores:
+            avg_score = sum(score for _, score in scores) / len(scores)
+            md_content.append(f"**平均評分:** {avg_score:.1f}/100")
+            md_content.append("")
+            
+            # 根據評分給出總體建議
+            if avg_score >= 75:
+                md_content.append("🟢 **整體評估:** 此投資組合表現優秀，大多數股票具有良好的投資價值。")
+            elif avg_score >= 60:
+                md_content.append("🟡 **整體評估:** 此投資組合表現中等，建議重點關注高評分股票。")
+            else:
+                md_content.append("🔴 **整體評估:** 此投資組合整體評分較低，建議謹慎投資或重新篩選。")
+        
+        md_content.append("")
+        md_content.append("### 投資建議")
+        
+        # 根據建議分布給出策略建議
+        if recommendations:
+            buy_ratio = recommendations.get('強烈買入', 0) + recommendations.get('買入', 0)
+            buy_percentage = (buy_ratio / successful_analyses * 100) if successful_analyses > 0 else 0
+            
+            if buy_percentage >= 50:
+                md_content.append("- 💰 **積極配置策略:** 投資組合中多數股票獲得買入建議，可考慮積極配置")
+            elif buy_percentage >= 30:
+                md_content.append("- 📊 **平衡配置策略:** 投資組合中部分股票值得投資，建議均衡配置")
+            else:
+                md_content.append("- 🛡️ **保守配置策略:** 投資組合中買入機會較少，建議保守配置或等待更好時機")
+        
+        md_content.append("- 📈 **建議關注高評分股票，逐步建立倉位**")
+        md_content.append("- ⚠️ **注意風險控制，避免過度集中在單一股票**")
+        md_content.append("- 📊 **定期檢視投資組合表現，適時調整配置**")
+        md_content.append("")
+        
+        # 免責聲明
+        md_content.append("---")
+        md_content.append("")
+        md_content.append("⚠️ **免責聲明:** 本報告僅供參考，不構成投資建議。投資有風險，請根據個人風險承受能力謹慎決策。")
+        md_content.append("")
+        md_content.append(f"*報告生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        
+        return "\n".join(md_content)
 
 
 class ValueInvestmentAgent:
@@ -1662,8 +2149,325 @@ class ValueInvestmentAgent:
 {context}
 """
         
+        # 根據不同分析師添加專業分析框架
+        if "芒格" in self.name:
+            base_prompt += f"""
+
+【多學科心智模型分析框架】
+請運用以下心智模型和學科知識進行分析：
+
+1. 心理學偏誤檢測：
+   - 確認偏誤：市場是否過度樂觀或悲觀？
+   - 錨定效應：當前估值是否受歷史高點影響？
+   - 從眾心理：投資者情緒是否影響合理定價？
+   - 損失厭惡：市場是否過度反應負面消息？
+
+2. 統計思維應用：
+   - 基準比較：與同業、指數的統計差異
+   - 迴歸平均：異常表現的持續性分析
+   - 樣本偏誤：財務數據的代表性檢驗
+   - 機率分佈：風險報酬的期望值計算
+
+3. 經濟學原理：
+   - 供需法則：產業供需平衡分析
+   - 邊際效用：成長投資的邊際報酬遞減
+   - 機會成本：相對於其他投資選項的吸引力
+   - 網路效應：平台型企業的競爭優勢
+
+4. 系統思維：
+   - 反饋循環：商業模式的自我強化機制
+   - 複雜適應：企業對環境變化的適應能力
+   - 槓桿點：小變化可能帶來大影響的關鍵因素
+   - 系統韌性：面對衝擊的恢復能力
+
+5. 跨學科整合：
+   - 物理學：慣性定律在企業發展中的體現
+   - 生物學：企業生態系統和競爭演化
+   - 化學：催化劑效應在商業中的應用
+   - 數學：複利效應和指數成長模式
+"""
+        elif "巴菲特" in self.name:
+            base_prompt += f"""
+
+【巴菲特價值投資分析框架】
+請運用經典價值投資原則進行深度分析：
+
+1. 護城河評估（Economic Moats）：
+   - 品牌價值：是否具有強勢品牌和客戶忠誠度？
+   - 成本優勢：是否擁有低成本生產或營運優勢？
+   - 網路效應：用戶增加是否提升產品價值？
+   - 轉換成本：客戶更換供應商的難度和成本？
+   - 法規壁壘：是否受到法規保護形成進入障礙？
+
+2. 管理層品質評估：
+   - 資本配置能力：管理層如何運用股東資金？
+   - 誠信度：是否有透明的溝通和可信的承諾？
+   - 股東導向：決策是否以股東利益為優先？
+   - 長期思維：是否專注長期價值而非短期業績？
+
+3. 財務品質分析：
+   - 盈餘品質：現金流與帳面盈餘的一致性
+   - 資本報酬：ROE、ROIC的持續性和穩定性
+   - 債務結構：負債水準和償債能力評估
+   - 自由現金流：持續產生現金的能力
+
+4. 內在價值評估：
+   - DCF估值：未來現金流折現分析
+   - 相對估值：與歷史和同業的估值比較
+   - 安全邊際：市價與內在價值的差距
+   - 長期成長：可持續成長率評估
+
+5. 定性因素：
+   - 商業模式：是否簡單易懂且可預測？
+   - 競爭地位：在產業中的地位和影響力
+   - 客戶關係：與客戶的長期合作關係
+   - 創新能力：持續改進和適應市場變化的能力
+"""
+        elif "成長" in self.name:
+            base_prompt += f"""
+
+【成長價值投資分析框架】
+請聚焦於成長性與價值的平衡分析：
+
+1. 成長性評估：
+   - 營收成長：歷史成長趨勢和未來成長潛力
+   - 獲利成長：EPS成長的品質和可持續性
+   - 市場擴張：可觸及市場(TAM/SAM)的成長空間
+   - 產品創新：新產品對成長的貢獻度
+   - 市佔率：在成長市場中的競爭地位
+
+2. 估值合理性：
+   - PEG比率：成長率相對於本益比的合理性
+   - 前瞻估值：基於未來盈餘的估值吸引力
+   - 成長股溢價：相對於價值股的溢價是否合理
+   - 同業比較：與成長型同業的估值差異
+
+3. 成長驅動因子：
+   - 產業週期：所處產業的成長階段
+   - 技術趨勢：是否搭上重要技術浪潮
+   - 市場需求：核心產品的市場需求強度
+   - 營運槓桿：規模擴張對獲利的放大效應
+
+4. 成長品質分析：
+   - 有機成長：內生成長vs併購成長的比例
+   - 投資回報：成長投資的資本效率
+   - 現金轉換：成長是否伴隨現金流改善
+   - 競爭護城河：成長優勢的可持續性
+
+5. 風險評估：
+   - 成長風險：未達成長預期的機率和影響
+   - 估值風險：高估值在成長放緩時的下跌風險
+   - 競爭風險：新進者稀釋成長機會的可能性
+   - 週期風險：成長受景氣週期影響的程度
+"""
+        elif "市場時機" in self.name:
+            base_prompt += f"""
+
+【市場時機與技術分析框架】
+請結合總體環境與技術分析進行判斷：
+
+1. 市場週期定位：
+   - 經濟週期：當前經濟週期階段對股市的影響
+   - 市場情緒：VIX、投資者情緒指標分析
+   - 資金流向：機構法人和散戶資金動向
+   - 政策環境：貨幣政策和財政政策影響
+
+2. 技術面分析：
+   - 價格趨勢：主要趨勢方向和強度
+   - 支撐阻力：關鍵價格水準和突破機率
+   - 技術指標：RSI、MACD、布林帶等信號
+   - 成交量：價量關係和成交量確認
+
+3. 相對強度分析：
+   - 板塊輪動：所屬板塊的相對表現
+   - 指數比較：相對於大盤的強弱表現
+   - 同業比較：在同業中的技術面地位
+   - 風格偏好：成長vs價值、大型vs小型股偏好
+
+4. 時機判斷要素：
+   - 進場時機：最佳買進時點的技術信號
+   - 出場策略：停損和停利點位設定
+   - 持有期間：基於技術面的預期持有時間
+   - 風險報酬：技術面風險與報酬比例
+
+5. 總體經濟因子：
+   - 利率環境：利率變化對估值的影響
+   - 通膨預期：通膨對企業成本和定價的影響
+   - 匯率影響：美元強弱對國際企業的影響
+   - 商品價格：原物料價格對成本結構的影響
+"""
+        elif "風險管理" in self.name:
+            base_prompt += f"""
+
+【風險管理與投資組合分析框架】
+請從風險控制和資產配置角度進行評估：
+
+1. 風險識別與量化：
+   - 系統性風險：市場、利率、匯率等系統風險
+   - 非系統性風險：公司特有風險和產業風險
+   - 流動性風險：日均成交量和市場深度分析
+   - 信用風險：財務結構和債務償還能力
+   - 營運風險：商業模式和管理風險
+
+2. 風險測量指標：
+   - Beta係數：相對於市場的敏感度
+   - 波動率：歷史價格波動程度
+   - VaR分析：在給定信心水準下的最大損失
+   - 下檔風險：負報酬的機率和幅度
+   - 最大回撤：歷史最大損失幅度
+
+3. 投資組合適配性：
+   - 相關性：與現有持股的相關程度
+   - 分散效果：對投資組合風險的分散貢獻
+   - 部位建議：建議配置比重和部位大小
+   - 再平衡需求：是否需要調整其他持股
+
+4. 風險調整報酬：
+   - 夏普比率：單位風險的超額報酬
+   - Treynor比率：單位系統風險的超額報酬
+   - 資訊比率：相對於基準的風險調整報酬
+   - 卡瑪比率：相對於最大回撤的報酬比
+
+5. 風險管控建議：
+   - 停損策略：建議停損點位和觸發條件
+   - 部位管理：分批建倉和減倉策略
+   - 對沖方案：可用的風險對沖工具
+   - 監控指標：需要持續關注的風險指標
+"""
+        
         if round_type == "initial":
-            task_prompt = f"""
+            if "芒格" in self.name:
+                task_prompt = f"""
+請從多學科心智模型的角度進行深度分析，特別關注：
+
+1. 心理偏誤識別（150字）：市場對該股票是否存在認知偏誤？
+2. 統計異常檢測（100字）：財務指標是否存在統計異常？
+3. 經濟護城河評估（100字）：運用經濟學原理分析競爭優勢
+4. 系統性風險評估（100字）：從系統思維角度識別潛在風險
+5. 跨學科洞察（50字）：其他學科能提供什麼獨特視角？
+
+請以 JSON 格式回應：
+{{
+    "analysis": "整合多學科分析的詳細內容",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "key_points": ["心理偏誤發現", "統計異常", "經濟護城河", "系統風險", "跨學科洞察"],
+    "cognitive_biases_detected": ["偏誤類型1", "偏誤類型2"],
+    "statistical_anomalies": ["異常指標1", "異常指標2"],
+    "economic_moats": ["護城河類型1", "護城河類型2"],
+    "systemic_risks": ["系統風險1", "系統風險2"],
+    "mental_models_applied": ["模型1", "模型2", "模型3"]
+}}
+"""
+            elif "巴菲特" in self.name:
+                task_prompt = f"""
+請從巴菲特價值投資哲學角度進行深度分析：
+
+1. 護城河分析（150字）：評估企業的競爭優勢和可持續性
+2. 管理層品質（100字）：評估管理層的資本配置能力和誠信度
+3. 財務品質（100字）：分析盈餘品質和現金流生成能力
+4. 內在價值（100字）：估算合理價值並評估安全邊際
+5. 長期前景（50字）：10年後企業的競爭地位預測
+
+請以 JSON 格式回應：
+{{
+    "analysis": "巴菲特風格的價值投資分析",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "key_points": ["護城河優勢", "管理層品質", "財務健全性", "估值吸引力", "長期前景"],
+    "economic_moats": ["品牌價值", "成本優勢", "網路效應"],
+    "management_quality": ["資本配置", "股東導向", "透明度"],
+    "financial_strength": ["現金流穩定", "低負債", "高ROE"],
+    "valuation_metrics": ["DCF估值", "相對估值", "安全邊際"],
+    "competitive_position": ["市場地位", "定價能力", "客戶黏性"]
+}}
+"""
+            elif "成長" in self.name:
+                task_prompt = f"""
+請從成長價值投資角度進行分析：
+
+1. 成長性評估（150字）：分析營收和獲利成長的可持續性
+2. 估值合理性（100字）：評估成長股溢價是否合理
+3. 成長驅動因子（100字）：識別核心成長動能和催化劑
+4. 成長品質（100字）：評估成長的品質和投資回報效率
+5. 風險評估（50字）：成長預期不達標的風險
+
+請以 JSON 格式回應：
+{{
+    "analysis": "成長價值投資深度分析",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "key_points": ["成長動能", "估值合理性", "競爭優勢", "執行能力", "風險控制"],
+    "growth_drivers": ["市場擴張", "產品創新", "營運槓桿"],
+    "growth_quality": ["有機成長", "現金轉換", "投資回報"],
+    "valuation_metrics": ["PEG比率", "前瞻估值", "同業比較"],
+    "competitive_advantages": ["技術領先", "市場地位", "品牌價值"],
+    "risk_factors": ["成長放緩", "估值修正", "競爭加劇"]
+}}
+"""
+            elif "市場時機" in self.name:
+                task_prompt = f"""
+請從市場時機和技術分析角度評估：
+
+1. 市場週期定位（150字）：當前市場環境和投資者情緒分析
+2. 技術面分析（100字）：價格趨勢、支撐阻力和技術指標
+3. 相對強度（100字）：相對於大盤和同業的表現比較
+4. 時機判斷（100字）：最佳進出場時機和策略建議
+5. 總體因子（50字）：利率、通膨等總體因素影響
+
+請以 JSON 格式回應：
+{{
+    "analysis": "市場時機與技術面綜合分析",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "key_points": ["趨勢方向", "進場時機", "風險報酬", "技術信號", "總體環境"],
+    "market_cycle": ["經濟階段", "市場情緒", "資金流向"],
+    "technical_signals": ["趨勢確認", "突破信號", "動能指標"],
+    "relative_strength": ["相對大盤", "板塊表現", "同業比較"],
+    "timing_strategy": ["進場點位", "停損設定", "獲利目標"],
+    "macro_factors": ["利率環境", "政策影響", "匯率因素"]
+}}
+"""
+            elif "風險管理" in self.name:
+                task_prompt = f"""
+請從風險管理和投資組合角度評估：
+
+1. 風險識別（150字）：系統性和非系統性風險的全面評估
+2. 風險量化（100字）：使用Beta、波動率、VaR等指標量化風險
+3. 投資組合適配（100字）：對整體投資組合的影響和分散效果
+4. 風險調整報酬（100字）：夏普比率等風險調整績效指標
+5. 風險管控（50字）：停損策略和部位管理建議
+
+請以 JSON 格式回應：
+{{
+    "analysis": "風險管理與投資組合分析",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "key_points": ["風險水準", "分散效果", "風險報酬", "流動性", "管控策略"],
+    "risk_factors": ["系統風險", "公司風險", "流動性風險"],
+    "risk_metrics": ["Beta係數", "波動率", "最大回撤"],
+    "portfolio_impact": ["相關性", "分散效果", "配置比重"],
+    "risk_adjusted_returns": ["夏普比率", "Treynor比率", "資訊比率"],
+    "risk_management": ["停損策略", "部位控制", "對沖方案"]
+}}
+"""
+            else:
+                task_prompt = f"""
 請從{self.investment_style}的角度進行首次分析，提供：
 
 1. 詳細分析（200-300字）
@@ -1685,7 +2489,135 @@ class ValueInvestmentAgent:
 }}
 """
         else:
-            task_prompt = f"""
+            if "芒格" in self.name:
+                task_prompt = f"""
+基於其他專家的分析，請從多學科角度重新評估：
+
+1. 偏誤糾正：其他專家的分析中存在哪些認知偏誤？
+2. 統計質疑：對其他專家的數據解讀提出統計學質疑
+3. 經濟邏輯檢驗：從經濟學原理檢驗其他觀點的合理性
+4. 系統性思考：從更高維度重新審視投資邏輯
+5. 心智模型應用：運用不同心智模型得出的結論
+
+請以 JSON 格式回應：
+{{
+    "analysis": "多學科辯論分析內容",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "rebuttal_points": ["對專家A的統計質疑", "對專家B的心理偏誤指出"],
+    "support_points": ["支持專家C的經濟邏輯", "認同專家D的系統分析"],
+    "bias_corrections": ["糾正的偏誤1", "糾正的偏誤2"],
+    "statistical_challenges": ["統計挑戰1", "統計挑戰2"],
+    "economic_logic_tests": ["邏輯檢驗1", "邏輯檢驗2"],
+    "mental_models_applied": ["反向思維", "機率思維", "系統思維"]
+}}
+"""
+            elif "巴菲特" in self.name:
+                task_prompt = f"""
+基於其他專家的分析，請從價值投資大師角度重新評估：
+
+1. 長期價值質疑：其他專家是否過分關注短期波動？
+2. 護城河挑戰：對其他專家的競爭優勢分析提出質疑
+3. 管理層評估：從治理角度評估其他專家忽略的風險
+4. 簡單性原則：複雜的投資邏輯是否違反簡單性原則？
+5. 安全邊際：重新評估風險和安全邊際的adequacy
+
+請以 JSON 格式回應：
+{{
+    "analysis": "巴菲特風格的辯論分析",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "rebuttal_points": ["短期思維批評", "護城河質疑"],
+    "support_points": ["認同的長期價值", "支持的競爭優勢"],
+    "long_term_perspective": ["10年後展望", "持續競爭力"],
+    "simplicity_test": ["商業模式簡單性", "可預測性"],
+    "margin_of_safety": ["價值低估程度", "風險緩衝"]
+}}
+"""
+            elif "成長" in self.name:
+                task_prompt = f"""
+基於其他專家的分析，請從成長投資角度重新評估：
+
+1. 成長潛力重估：其他專家是否低估了成長機會？
+2. 創新質疑：對傳統價值分析忽略創新價值的反駁
+3. 估值辯護：為成長股溢價提供合理辯護
+4. 趨勢把握：指出其他專家未注意到的成長趨勢
+5. 時間價值：強調時間複利對成長股的重要性
+
+請以 JSON 格式回應：
+{{
+    "analysis": "成長投資角度的辯論分析",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "rebuttal_points": ["成長被低估", "創新價值被忽視"],
+    "support_points": ["認同的成長邏輯", "支持的估值觀點"],
+    "growth_potential": ["未來成長空間", "新市場機會"],
+    "innovation_value": ["技術突破價值", "商業模式創新"],
+    "time_value": ["複利效應", "先發優勢價值"]
+}}
+"""
+            elif "市場時機" in self.name:
+                task_prompt = f"""
+基於其他專家的分析，請從市場時機角度重新評估：
+
+1. 時機挑戰：其他專家是否忽略了市場時機的重要性？
+2. 技術面反駁：用技術分析挑戰基本面結論
+3. 情緒修正：指出市場情緒對估值的影響
+4. 週期性觀點：從市場週期角度重新審視
+5. 流動性影響：評估市場流動性對價格的影響
+
+請以 JSON 格式回應：
+{{
+    "analysis": "市場時機分析師的辯論觀點",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "rebuttal_points": ["時機被忽視", "技術面否定基本面"],
+    "support_points": ["認同的趨勢分析", "支持的週期判斷"],
+    "timing_analysis": ["進場時機評估", "市場週期定位"],
+    "technical_divergence": ["價量背離", "指標反轉信號"],
+    "market_sentiment": ["情緒極端", "反向指標"]
+}}
+"""
+            elif "風險管理" in self.name:
+                task_prompt = f"""
+基於其他專家的分析，請從風險管理角度重新評估：
+
+1. 風險盲點：指出其他專家忽略的潛在風險
+2. 風險量化質疑：對其他專家的風險評估提出數據挑戰
+3. 組合影響：從投資組合角度評估個股風險
+4. 極端情境：考慮極端市場情況下的風險暴露
+5. 風險報酬失衡：挑戰風險與報酬的不對稱性
+
+請以 JSON 格式回應：
+{{
+    "analysis": "風險管理專家的辯論分析",
+    "recommendation": "BUY/HOLD/SELL",
+    "confidence": 7,
+    "target_price_low": 150.0,
+    "target_price_high": 180.0,
+    "risk_level": "MEDIUM",
+    "rebuttal_points": ["風險被低估", "報酬預期過高"],
+    "support_points": ["認同的風險控制", "支持的謹慎態度"],
+    "hidden_risks": ["未識別風險", "相關性風險"],
+    "risk_quantification": ["VaR重估", "壓力測試"],
+    "portfolio_impact": ["集中度風險", "相關性影響"],
+    "extreme_scenarios": ["黑天鵝事件", "系統性崩潰"]
+}}
+"""
+            else:
+                task_prompt = f"""
 基於其他專家的分析，請重新評估並提供辯論觀點：
 
 1. 針對其他專家意見的反駁或支持
@@ -1728,6 +2660,62 @@ class ValueInvestmentAgent:
                     result['confidence'] = 5
                 if 'risk_level' not in result:
                     result['risk_level'] = 'MEDIUM'
+                
+                # 對於不同分析師，保留特殊的專業分析字段
+                if "芒格" in self.name:
+                    # 芒格多學科分析字段
+                    munger_fields = [
+                        'cognitive_biases_detected', 'statistical_anomalies', 'economic_moats',
+                        'systemic_risks', 'mental_models_applied', 'bias_corrections',
+                        'statistical_challenges', 'economic_logic_tests'
+                    ]
+                    for field in munger_fields:
+                        if field not in result:
+                            result[field] = []
+                
+                elif "巴菲特" in self.name:
+                    # 巴菲特價值投資分析字段
+                    buffett_fields = [
+                        'economic_moats', 'management_quality', 'financial_strength',
+                        'valuation_metrics', 'competitive_position', 'long_term_perspective',
+                        'simplicity_test', 'margin_of_safety'
+                    ]
+                    for field in buffett_fields:
+                        if field not in result:
+                            result[field] = []
+                
+                elif "成長" in self.name:
+                    # 成長價值投資分析字段
+                    growth_fields = [
+                        'growth_drivers', 'growth_quality', 'valuation_metrics',
+                        'competitive_advantages', 'risk_factors', 'growth_potential',
+                        'innovation_value', 'time_value'
+                    ]
+                    for field in growth_fields:
+                        if field not in result:
+                            result[field] = []
+                
+                elif "市場時機" in self.name:
+                    # 市場時機分析字段
+                    timing_fields = [
+                        'market_cycle', 'technical_signals', 'relative_strength',
+                        'timing_strategy', 'macro_factors', 'timing_analysis',
+                        'technical_divergence', 'market_sentiment'
+                    ]
+                    for field in timing_fields:
+                        if field not in result:
+                            result[field] = []
+                
+                elif "風險管理" in self.name:
+                    # 風險管理分析字段
+                    risk_fields = [
+                        'risk_factors', 'risk_metrics', 'portfolio_impact',
+                        'risk_adjusted_returns', 'risk_management', 'hidden_risks',
+                        'risk_quantification', 'extreme_scenarios'
+                    ]
+                    for field in risk_fields:
+                        if field not in result:
+                            result[field] = []
                 
                 return result
             else:
@@ -1805,10 +2793,10 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                 investment_style="長期持有、尋找具有競爭優勢的優質企業"
             ),
             ValueInvestmentAgent(
-                name="葛拉漢派防御型投資師",
-                role="防御型價值投資分析師", 
-                expertise="安全邊際評估、財務穩健性分析、風險控制",
-                investment_style="重視安全邊際、偏好低估值穩健企業"
+                name="芒格多學科分析師",
+                role="多學科心智模型分析師", 
+                expertise="心理學偏誤識別、統計思維、經濟學原理、多元心智模型應用",
+                investment_style="運用跨領域知識，識別市場非理性，追求複利效應"
             ),
             ValueInvestmentAgent(
                 name="成長價值投資師",
@@ -1965,7 +2953,7 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         """將代理人名稱映射到狀態管理器的鍵值"""
         agent_mapping = {
             '巴菲特派價值投資師': 'fundamentals_analyst',
-            '葛拉漢派防御型投資師': 'conservative_debator',
+            '芒格多學科分析師': 'munger_analyst',
             '成長價值投資師': 'bull_researcher',
             '市場時機分析師': 'market_analyst',
             '風險管理專家': 'risk_manager'

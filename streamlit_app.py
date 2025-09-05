@@ -21,7 +21,7 @@ from src.stock_individual_analyzer import StockIndividualAnalyzer
 from src.utils import setup_logging, load_env_variables, format_currency, format_percentage, format_ratio, DateTimeEncoder
 from src.portfolio_db import PortfolioDatabase, portfolio_db, format_currency as format_portfolio_currency, get_currency_symbol
 from src.analysis_status import AnalysisStatusManager, MultiStockAnalysisStatus, analysis_status, portfolio_analysis_status
-from config.settings import SCREENING_CRITERIA, OUTPUT_SETTINGS, MULTI_AGENT_SETTINGS
+from config.settings import OUTPUT_SETTINGS, MULTI_AGENT_SETTINGS
 
 
 # 設置頁面配置
@@ -919,6 +919,15 @@ def analyze_selected_portfolio(tickers, enable_debate=True, save_results=True):
         st.session_state['portfolio_ai_results'] = results
         st.session_state['portfolio_ai_summary'] = generate_portfolio_ai_summary(results)
         
+        # 生成投資組合摘要MD報告
+        try:
+            portfolio_md_path = analyzer.save_portfolio_summary_as_markdown(results, "portfolio_analysis")
+            if portfolio_md_path:
+                st.session_state['portfolio_md_report_path'] = portfolio_md_path
+                logging.info(f"已生成投資組合摘要MD報告: {portfolio_md_path}")
+        except Exception as md_error:
+            logging.warning(f"無法生成投資組合摘要MD報告: {md_error}")
+        
         # 清除狀態顯示
         status_container.empty()
         
@@ -990,6 +999,24 @@ def display_portfolio_ai_results():
         with col_sum4:
             success_rate = (summary['successful_analyses'] / summary['total_stocks']) * 100
             st.metric("成功率", f"{success_rate:.1f}%")
+        
+        # 添加投資組合摘要MD報告下載按鈕
+        if 'portfolio_md_report_path' in st.session_state:
+            md_path = st.session_state['portfolio_md_report_path']
+            try:
+                if os.path.exists(md_path):
+                    with open(md_path, 'r', encoding='utf-8') as f:
+                        md_content = f.read()
+                    
+                    st.download_button(
+                        label="📄 下載投資組合摘要報告 (MD)",
+                        data=md_content,
+                        file_name=f"portfolio_summary_{datetime.now().strftime('%Y%m%d')}.md",
+                        mime="text/markdown",
+                        use_container_width=True
+                    )
+            except Exception as e:
+                st.warning(f"無法載入投資組合摘要報告: {e}")
     
     # 顯示詳細結果
     st.markdown("#### 📋 詳細分析結果")
@@ -1009,36 +1036,95 @@ def display_single_stock_ai_analysis(ticker, result):
         return
     
     analysis = result['analysis']
+    stock_data = result.get('stock_data', {})
+    
+    # 添加MD報告下載功能
+    if 'markdown_report_path' in analysis:
+        md_path = analysis['markdown_report_path']
+        try:
+            if os.path.exists(md_path):
+                with open(md_path, 'r', encoding='utf-8') as f:
+                    md_content = f.read()
+                
+                # 創建下載按鈕
+                col_download, col_spacer = st.columns([1, 3])
+                with col_download:
+                    st.download_button(
+                        label="📄 下載MD分析報告",
+                        data=md_content,
+                        file_name=f"{ticker}_analysis_report_{datetime.now().strftime('%Y%m%d')}.md",
+                        mime="text/markdown",
+                        use_container_width=True
+                    )
+        except Exception as e:
+            st.warning(f"無法載入MD報告: {e}")
     
     # 基本資訊
-    if 'stock_data' in result:
-        stock_data = result['stock_data']
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("當前價格", f"${stock_data.get('current_price', 'N/A')}")
-        
-        with col2:
-            market_cap = stock_data.get('market_cap')
-            if market_cap:
-                st.metric("市值", f"${market_cap/1e9:.1f}B")
-            else:
-                st.metric("市值", "N/A")
-        
-        with col3:
-            pe_ratio = stock_data.get('pe_ratio')
-            if pe_ratio:
-                st.metric("本益比", f"{pe_ratio:.1f}")
-            else:
-                st.metric("本益比", "N/A")
-        
-        with col4:
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        current_price = stock_data.get('current_price') or stock_data.get('price')
+        if current_price:
+            st.metric("當前價格", f"${current_price:.2f}")
+        else:
+            st.metric("當前價格", "N/A")
+    
+    with col2:
+        market_cap = stock_data.get('market_cap')
+        if market_cap and market_cap > 0:
+            st.metric("市值", f"${market_cap/1e9:.1f}B")
+        else:
+            st.metric("市值", "N/A")
+    
+    with col3:
+        pe_ratio = stock_data.get('pe_ratio') or stock_data.get('trailing_pe')
+        if pe_ratio:
+            st.metric("本益比", f"{pe_ratio:.1f}")
+        else:
+            st.metric("本益比", "N/A")
+    
+    with col4:
+        value_score = stock_data.get('value_score')
+        if value_score:
+            st.metric("價值評分", f"{value_score:.1f}")
+        else:
             dividend_yield = stock_data.get('dividend_yield')
             if dividend_yield:
                 st.metric("股息率", f"{dividend_yield:.2%}")
             else:
                 st.metric("股息率", "N/A")
+    
+    # 價值投資指標
+    st.markdown("##### 📊 價值投資指標")
+    col_val1, col_val2, col_val3, col_val4 = st.columns(4)
+    
+    with col_val1:
+        pb_ratio = stock_data.get('pb_ratio') or stock_data.get('price_to_book')
+        if pb_ratio:
+            st.metric("市淨率", f"{pb_ratio:.2f}")
+        else:
+            st.metric("市淨率", "N/A")
+    
+    with col_val2:
+        dividend_yield = stock_data.get('dividend_yield')
+        if dividend_yield:
+            st.metric("股息率", f"{dividend_yield:.2%}")
+        else:
+            st.metric("股息率", "N/A")
+    
+    with col_val3:
+        debt_ratio = stock_data.get('debt_to_equity')
+        if debt_ratio:
+            st.metric("負債比", f"{debt_ratio:.2f}")
+        else:
+            st.metric("負債比", "N/A")
+    
+    with col_val4:
+        roe = stock_data.get('roe') or stock_data.get('return_on_equity')
+        if roe:
+            st.metric("股東權益報酬率", f"{roe:.2%}")
+        else:
+            st.metric("股東權益報酬率", "N/A")
     
     # 多代理人辯論結果
     if 'multi_agent_debate' in analysis:
@@ -1050,20 +1136,28 @@ def display_single_stock_ai_analysis(ticker, result):
             voting = debate['voting_results']
             
             # 顯示投票結果
-            col_vote1, col_vote2, col_vote3 = st.columns(3)
+            st.markdown("**📊 代理人投票結果:**")
             
-            with col_vote1:
-                st.metric("買入票數", voting.get('buy_votes', 0))
+            # 顯示最終投票統計
+            final_votes = voting.get('final_votes', {})
+            if final_votes:
+                st.markdown("**最終投票統計:**")
+                for position, count in final_votes.items():
+                    if count > 0:
+                        st.markdown(f"- **{position}**: {count} 票")
             
-            with col_vote2:
-                st.metric("持有票數", voting.get('hold_votes', 0))
+            # 顯示各代理人最終立場
+            agent_positions = voting.get('agent_final_positions', {})
+            if agent_positions:
+                st.markdown("**各專家最終立場:**")
+                for agent_name, position in agent_positions.items():
+                    recommendation = position.get('recommendation', 'HOLD')
+                    confidence = position.get('confidence', 5)
+                    st.markdown(f"- **{agent_name}**: {recommendation} (信心度: {confidence}/10)")
             
-            with col_vote3:
-                st.metric("賣出票數", voting.get('sell_votes', 0))
-            
-            # 顯示共識度
+            # 顯示共識程度
             consensus_level = voting.get('consensus_level', 0)
-            st.progress(consensus_level, text=f"專家共識度: {consensus_level:.1%}")
+            st.markdown(f"**共識程度**: {consensus_level:.1%}")
         
         # 專家最終立場摘要
         if 'voting_results' in debate and 'agent_final_positions' in debate['voting_results']:
@@ -1114,7 +1208,7 @@ def display_single_stock_ai_analysis(ticker, result):
                     for agent in sell_agents:
                         st.write(f"• {agent}")
                 else:
-                    st.markdown("� **建議賣出:** 無")
+                    st.markdown("🔴 **建議賣出:** 無")
         
         # 辯論重點整理
         if 'final_consensus' in debate:
@@ -1223,6 +1317,25 @@ def display_single_stock_ai_analysis(ticker, result):
             st.markdown("**關鍵分析要點:**")
             for point in rec['key_points']:
                 st.write(f"• {point}")
+    
+    # 新聞情緒分析（如果有）
+    if 'news_sentiment' in analysis:
+        news_sentiment = analysis['news_sentiment']
+        
+        st.markdown("##### 📰 新聞情緒分析")
+        
+        if 'overall_sentiment' in news_sentiment:
+            sentiment = news_sentiment['overall_sentiment']
+            if sentiment > 0.1:
+                st.success(f"🟢 **整體情緒**: 正面 ({sentiment:.2f})")
+            elif sentiment < -0.1:
+                st.error(f"🔴 **整體情緒**: 負面 ({sentiment:.2f})")
+            else:
+                st.warning(f"🟡 **整體情緒**: 中性 ({sentiment:.2f})")
+        
+        if 'news_summary' in news_sentiment:
+            st.markdown("**📝 新聞摘要:**")
+            st.markdown(news_sentiment['news_summary'])
 
 
 def data_analysis_interface():
@@ -1785,7 +1898,7 @@ def run_ai_analysis():
         tickers = [stock['ticker'] for stock in stock_list]
         
         # 初始化狀態管理器
-        analysis_status_manager = analysis_status
+        analysis_status_manager = portfolio_analysis_status
         analysis_status_manager.start_portfolio_analysis(tickers)
         
         # 創建狀態顯示區域
@@ -1993,11 +2106,27 @@ def display_single_stock_screening_analysis(ticker, result):
             
             # 顯示投票結果
             st.markdown("**📊 代理人投票結果:**")
-            for position, details in voting.items():
-                agents = details.get('agents', [])
-                if agents:
-                    agent_names = ', '.join(agents)
-                    st.markdown(f"- **{position}**: {agent_names}")
+            
+            # 顯示最終投票統計
+            final_votes = voting.get('final_votes', {})
+            if final_votes:
+                st.markdown("**最終投票統計:**")
+                for position, count in final_votes.items():
+                    if count > 0:
+                        st.markdown(f"- **{position}**: {count} 票")
+            
+            # 顯示各代理人最終立場
+            agent_positions = voting.get('agent_final_positions', {})
+            if agent_positions:
+                st.markdown("**各專家最終立場:**")
+                for agent_name, position in agent_positions.items():
+                    recommendation = position.get('recommendation', 'HOLD')
+                    confidence = position.get('confidence', 5)
+                    st.markdown(f"- **{agent_name}**: {recommendation} (信心度: {confidence}/10)")
+            
+            # 顯示共識程度
+            consensus_level = voting.get('consensus_level', 0)
+            st.markdown(f"**共識程度**: {consensus_level:.1%}")
         
         if 'final_consensus' in debate:
             consensus = debate['final_consensus']
