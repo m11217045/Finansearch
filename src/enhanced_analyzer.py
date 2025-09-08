@@ -1778,44 +1778,306 @@ class EnhancedStockAnalyzer:
         
         # 多代理人辯論結果 (如果有的話)
         if 'multi_agent_debate' in analysis_result:
-            md_content.append("## 🗣️ 多代理人辯論結果")
+            md_content.append("## 🗣️ 多代理人辯論分析")
             md_content.append("")
             
             debate = analysis_result['multi_agent_debate']
             
+            # 各專家獨立分析總結
+            if 'agents_analysis' in debate:
+                md_content.append("### 📋 各專家獨立分析總結")
+                md_content.append("")
+                md_content.append("以下是各領域專家在辯論前的獨立分析觀點：")
+                md_content.append("")
+                
+                for agent_name, agent_analysis in debate['agents_analysis'].items():
+                    agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
+                    initial_rec = agent_analysis.get('initial_recommendation', 'UNKNOWN')
+                    initial_confidence = agent_analysis.get('initial_confidence', 0)
+                    initial_reasoning = agent_analysis.get('initial_reasoning', '')
+                    initial_risk = agent_analysis.get('initial_risk_level', 'UNKNOWN')
+                    
+                    emoji = "🟢" if initial_rec == "BUY" else "🟡" if initial_rec == "HOLD" else "🔴" if initial_rec == "SELL" else "❓"
+                    
+                    md_content.append(f"#### {emoji} {agent_display} - 初始觀點")
+                    md_content.append(f"**初始建議:** {initial_rec}")
+                    md_content.append(f"**初始信心度:** {initial_confidence}/10")
+                    md_content.append(f"**風險評估:** {initial_risk}")
+                    
+                    # 目標價格
+                    if agent_analysis.get('initial_target_price_low') and agent_analysis.get('initial_target_price_high'):
+                        md_content.append(f"**目標價格區間:** ${agent_analysis['initial_target_price_low']:.2f} - ${agent_analysis['initial_target_price_high']:.2f}")
+                    
+                    md_content.append(f"**分析要點:** {initial_reasoning[:500]}{'...' if len(initial_reasoning) > 500 else ''}")
+                    
+                    # 專家特有的分析內容
+                    if "芒格" in agent_name:
+                        # 芒格多學科分析
+                        if agent_analysis.get('mental_models_applied'):
+                            md_content.append(f"**應用的心智模型:** {', '.join(agent_analysis['mental_models_applied'][:3])}")
+                        if agent_analysis.get('cognitive_biases_detected'):
+                            md_content.append(f"**識別的認知偏誤:** {', '.join(agent_analysis['cognitive_biases_detected'][:2])}")
+                        if agent_analysis.get('economic_moats'):
+                            md_content.append(f"**經濟護城河:** {', '.join(agent_analysis['economic_moats'][:2])}")
+                    
+                    elif "巴菲特" in agent_name:
+                        # 巴菲特價值投資分析
+                        if agent_analysis.get('competitive_position'):
+                            md_content.append(f"**競爭地位評估:** {', '.join(agent_analysis['competitive_position'][:2])}")
+                        if agent_analysis.get('margin_of_safety'):
+                            md_content.append(f"**安全邊際分析:** {', '.join(agent_analysis['margin_of_safety'][:2])}")
+                        if agent_analysis.get('management_quality'):
+                            md_content.append(f"**管理層品質:** {', '.join(agent_analysis['management_quality'][:2])}")
+                    
+                    elif "成長" in agent_name:
+                        # 成長投資分析
+                        if agent_analysis.get('growth_drivers'):
+                            md_content.append(f"**成長驅動因子:** {', '.join(agent_analysis['growth_drivers'][:3])}")
+                        if agent_analysis.get('innovation_value'):
+                            md_content.append(f"**創新價值評估:** {', '.join(agent_analysis['innovation_value'][:2])}")
+                        if agent_analysis.get('growth_potential'):
+                            md_content.append(f"**成長潛力:** {', '.join(agent_analysis['growth_potential'][:2])}")
+                    
+                    elif "市場時機" in agent_name:
+                        # 市場時機分析
+                        if agent_analysis.get('market_cycle'):
+                            md_content.append(f"**市場週期判斷:** {', '.join(agent_analysis['market_cycle'][:2])}")
+                        if agent_analysis.get('technical_signals'):
+                            md_content.append(f"**技術指標信號:** {', '.join(agent_analysis['technical_signals'][:3])}")
+                        if agent_analysis.get('timing_strategy'):
+                            md_content.append(f"**進場時機策略:** {', '.join(agent_analysis['timing_strategy'][:2])}")
+                    
+                    elif "風險管理" in agent_name:
+                        # 風險管理分析
+                        if agent_analysis.get('risk_factors'):
+                            md_content.append(f"**主要風險因素:** {', '.join(agent_analysis['risk_factors'][:3])}")
+                        if agent_analysis.get('hidden_risks'):
+                            md_content.append(f"**隱藏風險:** {', '.join(agent_analysis['hidden_risks'][:2])}")
+                        if agent_analysis.get('risk_management'):
+                            md_content.append(f"**風險控制建議:** {', '.join(agent_analysis['risk_management'][:2])}")
+                    
+                    md_content.append("")
+                
+                md_content.append("---")
+                md_content.append("")
+            
+            # 辯論過程與立場變化
+            if 'agents_analysis' in debate:
+                md_content.append("### 🔄 辯論過程與立場變化")
+                md_content.append("")
+                
+                has_position_changes = False
+                for agent_name, agent_analysis in debate['agents_analysis'].items():
+                    initial_rec = agent_analysis.get('initial_recommendation', 'UNKNOWN')
+                    final_rec = agent_analysis.get('recommendation', 'UNKNOWN')
+                    position_change_reason = agent_analysis.get('position_change_reason', '')
+                    
+                    if initial_rec != final_rec or position_change_reason:
+                        has_position_changes = True
+                        agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
+                        
+                        if initial_rec != final_rec:
+                            md_content.append(f"#### 🔄 {agent_display} - 立場變化")
+                            md_content.append(f"**原始立場:** {initial_rec} → **最終立場:** {final_rec}")
+                            if position_change_reason:
+                                md_content.append(f"**變化原因:** {position_change_reason}")
+                            md_content.append("")
+                        elif position_change_reason and position_change_reason != "立場保持一致":
+                            md_content.append(f"#### ✅ {agent_display} - 立場強化")
+                            md_content.append(f"**立場:** {final_rec} (保持一致)")
+                            md_content.append(f"**觀點深化:** {position_change_reason}")
+                            md_content.append("")
+                
+                if not has_position_changes:
+                    md_content.append("**所有專家在辯論過程中均保持其初始立場，顯示分析觀點具有一致性。**")
+                    md_content.append("")
+                
+                md_content.append("---")
+                md_content.append("")
+            
+            # 辯論輪次詳情
+            if 'debate_rounds' in debate and debate['debate_rounds']:
+                md_content.append("### 💬 辯論輪次詳情")
+                md_content.append("")
+                
+                for round_data in debate['debate_rounds']:
+                    round_num = round_data.get('round', 0)
+                    md_content.append(f"#### 第 {round_num} 輪辯論")
+                    md_content.append("")
+                    
+                    agent_responses = round_data.get('agent_responses', {})
+                    for agent_name, response in agent_responses.items():
+                        agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
+                        rec = response.get('recommendation', 'UNKNOWN')
+                        confidence = response.get('confidence', 0)
+                        
+                        # 提取反駁點和支持點
+                        rebuttal_points = response.get('rebuttal_points', [])
+                        support_points = response.get('support_points', [])
+                        
+                        emoji = "🟢" if rec == "BUY" else "🟡" if rec == "HOLD" else "🔴" if rec == "SELL" else "❓"
+                        
+                        md_content.append(f"**{emoji} {agent_display}** ({rec}, 信心度: {confidence}/10)")
+                        
+                        if rebuttal_points:
+                            md_content.append("- 反駁觀點:")
+                            for point in rebuttal_points[:3]:  # 最多顯示3個反駁點
+                                md_content.append(f"  • {point}")
+                        
+                        if support_points:
+                            md_content.append("- 支持觀點:")
+                            for point in support_points[:3]:  # 最多顯示3個支持點
+                                md_content.append(f"  • {point}")
+                        
+                        md_content.append("")
+                    
+                md_content.append("---")
+                md_content.append("")
+            
+            # 投票結果和最終立場
             if 'voting_results' in debate:
                 voting = debate['voting_results']
                 
-                md_content.append("### 投票結果")
+                md_content.append("### 🗳️ 最終投票結果")
                 md_content.append("")
-                md_content.append("| 建議 | 票數 |")
-                md_content.append("|------|------|")
-                md_content.append(f"| 買入 | {voting.get('buy_votes', 0)} |")
-                md_content.append(f"| 持有 | {voting.get('hold_votes', 0)} |")
-                md_content.append(f"| 賣出 | {voting.get('sell_votes', 0)} |")
+                md_content.append("| 建議 | 票數 | 百分比 |")
+                md_content.append("|------|------|--------|")
+                
+                total_votes = voting.get('buy_votes', 0) + voting.get('hold_votes', 0) + voting.get('sell_votes', 0)
+                if total_votes > 0:
+                    buy_pct = voting.get('buy_votes', 0) / total_votes * 100
+                    hold_pct = voting.get('hold_votes', 0) / total_votes * 100
+                    sell_pct = voting.get('sell_votes', 0) / total_votes * 100
+                    
+                    md_content.append(f"| 🟢 買入 | {voting.get('buy_votes', 0)} | {buy_pct:.1f}% |")
+                    md_content.append(f"| 🟡 持有 | {voting.get('hold_votes', 0)} | {hold_pct:.1f}% |")
+                    md_content.append(f"| 🔴 賣出 | {voting.get('sell_votes', 0)} | {sell_pct:.1f}% |")
+                else:
+                    md_content.append(f"| 🟢 買入 | {voting.get('buy_votes', 0)} | - |")
+                    md_content.append(f"| 🟡 持有 | {voting.get('hold_votes', 0)} | - |")
+                    md_content.append(f"| 🔴 賣出 | {voting.get('sell_votes', 0)} | - |")
+                
                 md_content.append("")
                 md_content.append(f"**專家共識度:** {voting.get('consensus_level', 0):.1%}")
                 md_content.append("")
                 
-                # 專家最終立場
+                # 專家最終立場詳細版
                 if 'agent_final_positions' in voting:
-                    md_content.append("### 專家最終立場")
+                    md_content.append("### 👥 專家最終立場詳情")
                     md_content.append("")
                     
                     for agent_name, position in voting['agent_final_positions'].items():
                         agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
                         rec = position.get('recommendation', 'UNKNOWN')
                         confidence = position.get('confidence', 0)
-                        reasoning = position.get('final_reasoning', '')
+                        
+                        # 從agents_analysis中獲取更詳細的最終推理和分析欄位
+                        final_reasoning = ""
+                        target_price_info = ""
+                        professional_analysis = []
+                        
+                        if agent_name in debate.get('agents_analysis', {}):
+                            agent_data = debate['agents_analysis'][agent_name]
+                            final_reasoning = agent_data.get('reasoning', '')
+                            
+                            # 目標價格信息
+                            if agent_data.get('target_price_low') and agent_data.get('target_price_high'):
+                                target_price_info = f"目標價格: ${agent_data['target_price_low']:.2f} - ${agent_data['target_price_high']:.2f}"
+                            
+                            # 專家特有的專業分析
+                            if "芒格" in agent_name:
+                                if agent_data.get('final_mental_models_applied'):
+                                    professional_analysis.append(f"**應用心智模型:** {', '.join(agent_data['final_mental_models_applied'][:3])}")
+                                if agent_data.get('final_bias_corrections'):
+                                    professional_analysis.append(f"**偏誤糾正:** {', '.join(agent_data['final_bias_corrections'][:2])}")
+                                if agent_data.get('final_statistical_challenges'):
+                                    professional_analysis.append(f"**統計質疑:** {', '.join(agent_data['final_statistical_challenges'][:2])}")
+                            
+                            elif "巴菲特" in agent_name:
+                                if agent_data.get('final_long_term_perspective'):
+                                    professional_analysis.append(f"**長期視角:** {', '.join(agent_data['final_long_term_perspective'][:2])}")
+                                if agent_data.get('final_simplicity_test'):
+                                    professional_analysis.append(f"**簡單性檢驗:** {', '.join(agent_data['final_simplicity_test'][:2])}")
+                                if agent_data.get('final_margin_of_safety'):
+                                    professional_analysis.append(f"**安全邊際:** {', '.join(agent_data['final_margin_of_safety'][:2])}")
+                            
+                            elif "成長" in agent_name:
+                                if agent_data.get('final_growth_potential'):
+                                    professional_analysis.append(f"**成長潛力:** {', '.join(agent_data['final_growth_potential'][:2])}")
+                                if agent_data.get('final_innovation_value'):
+                                    professional_analysis.append(f"**創新價值:** {', '.join(agent_data['final_innovation_value'][:2])}")
+                                if agent_data.get('final_time_value'):
+                                    professional_analysis.append(f"**時間價值:** {', '.join(agent_data['final_time_value'][:2])}")
+                            
+                            elif "市場時機" in agent_name:
+                                if agent_data.get('final_timing_analysis'):
+                                    professional_analysis.append(f"**時機分析:** {', '.join(agent_data['final_timing_analysis'][:2])}")
+                                if agent_data.get('final_technical_divergence'):
+                                    professional_analysis.append(f"**技術面分歧:** {', '.join(agent_data['final_technical_divergence'][:2])}")
+                                if agent_data.get('final_market_sentiment'):
+                                    professional_analysis.append(f"**市場情緒:** {', '.join(agent_data['final_market_sentiment'][:2])}")
+                            
+                            elif "風險管理" in agent_name:
+                                if agent_data.get('final_hidden_risks'):
+                                    professional_analysis.append(f"**隱藏風險:** {', '.join(agent_data['final_hidden_risks'][:2])}")
+                                if agent_data.get('final_risk_quantification'):
+                                    professional_analysis.append(f"**風險量化:** {', '.join(agent_data['final_risk_quantification'][:2])}")
+                                if agent_data.get('final_extreme_scenarios'):
+                                    professional_analysis.append(f"**極端情境:** {', '.join(agent_data['final_extreme_scenarios'][:2])}")
+                            
+                            # 最終反駁和支持點
+                            if agent_data.get('final_rebuttal_points'):
+                                professional_analysis.append(f"**主要反駁:** {'; '.join(agent_data['final_rebuttal_points'][:2])}")
+                            if agent_data.get('final_support_points'):
+                                professional_analysis.append(f"**主要支持:** {'; '.join(agent_data['final_support_points'][:2])}")
                         
                         emoji = "🟢" if rec == "BUY" else "🟡" if rec == "HOLD" else "🔴" if rec == "SELL" else "❓"
                         
                         md_content.append(f"#### {emoji} {agent_display}")
-                        md_content.append(f"**建議:** {rec}")
+                        md_content.append(f"**最終建議:** {rec}")
                         md_content.append(f"**信心度:** {confidence}/10")
-                        if reasoning:
-                            md_content.append(f"**理由:** {reasoning}")
+                        if target_price_info:
+                            md_content.append(target_price_info)
+                        if final_reasoning:
+                            md_content.append(f"**最終理由:** {final_reasoning[:400]}{'...' if len(final_reasoning) > 400 else ''}")
+                        
+                        # 顯示專業分析
+                        for analysis_item in professional_analysis:
+                            md_content.append(analysis_item)
+                        
                         md_content.append("")
+            
+            # 辯論總結
+            if 'debate_summary' in debate:
+                md_content.append("### 📝 辯論總結")
+                md_content.append("")
+                md_content.append(debate['debate_summary'])
+                md_content.append("")
+            
+            # 最終共識
+            if 'final_consensus' in debate:
+                consensus = debate['final_consensus']
+                md_content.append("### 🤝 專家團隊最終共識")
+                md_content.append("")
+                md_content.append(f"**共識建議:** {consensus.get('final_recommendation', 'UNKNOWN')}")
+                md_content.append(f"**平均信心度:** {consensus.get('average_confidence', 0):.1f}/10")
+                md_content.append(f"**共識等級:** {consensus.get('consensus_level', 0):.1%}")
+                md_content.append("")
+                
+                if consensus.get('supporting_points'):
+                    md_content.append("**主要支持論點:**")
+                    for point in consensus['supporting_points']:
+                        md_content.append(f"- {point}")
+                    md_content.append("")
+                
+                if consensus.get('opposing_points'):
+                    md_content.append("**主要反對論點:**")
+                    for point in consensus['opposing_points']:
+                        md_content.append(f"- {point}")
+                    md_content.append("")
+            
+            md_content.append("---")
+            md_content.append("")
         
         # 結論
         md_content.append("---")
@@ -3055,17 +3317,73 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         # 處理並發分析結果
         for agent_name, analysis_result in concurrent_results.items():
             try:
-                # 保存初始分析和最終分析位置
+                # 保存更詳細的初始分析和最終分析位置
                 debate_result['agents_analysis'][agent_name] = {
                     'initial_recommendation': analysis_result.get('recommendation', 'HOLD'),
                     'initial_confidence': analysis_result.get('confidence', 5),
                     'initial_reasoning': analysis_result.get('analysis', ''),
                     'initial_risk_level': analysis_result.get('risk_level', 'MEDIUM'),
+                    'initial_target_price_low': analysis_result.get('target_price_low'),
+                    'initial_target_price_high': analysis_result.get('target_price_high'),
                     'recommendation': analysis_result.get('recommendation', 'HOLD'),  # 會在辯論後更新
                     'confidence': analysis_result.get('confidence', 5),  # 會在辯論後更新
                     'reasoning': analysis_result.get('analysis', ''),  # 會在辯論後更新
                     'risk_level': analysis_result.get('risk_level', 'MEDIUM'),  # 會在辯論後更新
-                    'position_change_reason': ''  # 辯論後如有變化會填入
+                    'target_price_low': analysis_result.get('target_price_low'),  # 會在辯論後更新
+                    'target_price_high': analysis_result.get('target_price_high'),  # 會在辯論後更新
+                    'position_change_reason': '',  # 辯論後如有變化會填入
+                    
+                    # 保存專家特有的專業分析欄位
+                    'rebuttal_points': analysis_result.get('rebuttal_points', []),
+                    'support_points': analysis_result.get('support_points', []),
+                    'key_points': analysis_result.get('key_points', []),
+                    
+                    # 芒格多學科分析特有欄位
+                    'cognitive_biases_detected': analysis_result.get('cognitive_biases_detected', []),
+                    'statistical_anomalies': analysis_result.get('statistical_anomalies', []),
+                    'economic_moats': analysis_result.get('economic_moats', []),
+                    'systemic_risks': analysis_result.get('systemic_risks', []),
+                    'mental_models_applied': analysis_result.get('mental_models_applied', []),
+                    'bias_corrections': analysis_result.get('bias_corrections', []),
+                    'statistical_challenges': analysis_result.get('statistical_challenges', []),
+                    'economic_logic_tests': analysis_result.get('economic_logic_tests', []),
+                    
+                    # 巴菲特價值投資特有欄位
+                    'management_quality': analysis_result.get('management_quality', []),
+                    'financial_strength': analysis_result.get('financial_strength', []),
+                    'valuation_metrics': analysis_result.get('valuation_metrics', []),
+                    'competitive_position': analysis_result.get('competitive_position', []),
+                    'long_term_perspective': analysis_result.get('long_term_perspective', []),
+                    'simplicity_test': analysis_result.get('simplicity_test', []),
+                    'margin_of_safety': analysis_result.get('margin_of_safety', []),
+                    
+                    # 成長投資特有欄位
+                    'growth_drivers': analysis_result.get('growth_drivers', []),
+                    'growth_quality': analysis_result.get('growth_quality', []),
+                    'competitive_advantages': analysis_result.get('competitive_advantages', []),
+                    'growth_potential': analysis_result.get('growth_potential', []),
+                    'innovation_value': analysis_result.get('innovation_value', []),
+                    'time_value': analysis_result.get('time_value', []),
+                    
+                    # 市場時機分析特有欄位
+                    'market_cycle': analysis_result.get('market_cycle', []),
+                    'technical_signals': analysis_result.get('technical_signals', []),
+                    'relative_strength': analysis_result.get('relative_strength', []),
+                    'timing_strategy': analysis_result.get('timing_strategy', []),
+                    'macro_factors': analysis_result.get('macro_factors', []),
+                    'timing_analysis': analysis_result.get('timing_analysis', []),
+                    'technical_divergence': analysis_result.get('technical_divergence', []),
+                    'market_sentiment': analysis_result.get('market_sentiment', []),
+                    
+                    # 風險管理特有欄位
+                    'risk_factors': analysis_result.get('risk_factors', []),
+                    'risk_metrics': analysis_result.get('risk_metrics', []),
+                    'portfolio_impact': analysis_result.get('portfolio_impact', []),
+                    'risk_adjusted_returns': analysis_result.get('risk_adjusted_returns', []),
+                    'risk_management': analysis_result.get('risk_management', []),
+                    'hidden_risks': analysis_result.get('hidden_risks', []),
+                    'risk_quantification': analysis_result.get('risk_quantification', []),
+                    'extreme_scenarios': analysis_result.get('extreme_scenarios', [])
                 }
                 
             except Exception as e:
@@ -3080,7 +3398,10 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                     'confidence': 0,
                     'reasoning': f'結果處理失敗: {e}',
                     'risk_level': 'UNKNOWN',
-                    'position_change_reason': ''
+                    'position_change_reason': '',
+                    'rebuttal_points': [],
+                    'support_points': [],
+                    'key_points': []
                 }
         
         # 進行辯論輪次
@@ -3116,6 +3437,40 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                     agent_data['confidence'] = final_response.get('confidence', 5)
                     agent_data['reasoning'] = final_response.get('analysis', '')
                     agent_data['risk_level'] = final_response.get('risk_level', 'MEDIUM')
+                    agent_data['target_price_low'] = final_response.get('target_price_low')
+                    agent_data['target_price_high'] = final_response.get('target_price_high')
+                    
+                    # 更新最終的專業分析欄位
+                    agent_data['final_rebuttal_points'] = final_response.get('rebuttal_points', [])
+                    agent_data['final_support_points'] = final_response.get('support_points', [])
+                    agent_data['final_key_points'] = final_response.get('key_points', [])
+                    
+                    # 更新專家特有的最終分析欄位
+                    if "芒格" in agent_name:
+                        agent_data['final_bias_corrections'] = final_response.get('bias_corrections', [])
+                        agent_data['final_statistical_challenges'] = final_response.get('statistical_challenges', [])
+                        agent_data['final_economic_logic_tests'] = final_response.get('economic_logic_tests', [])
+                        agent_data['final_mental_models_applied'] = final_response.get('mental_models_applied', [])
+                    
+                    elif "巴菲特" in agent_name:
+                        agent_data['final_long_term_perspective'] = final_response.get('long_term_perspective', [])
+                        agent_data['final_simplicity_test'] = final_response.get('simplicity_test', [])
+                        agent_data['final_margin_of_safety'] = final_response.get('margin_of_safety', [])
+                    
+                    elif "成長" in agent_name:
+                        agent_data['final_growth_potential'] = final_response.get('growth_potential', [])
+                        agent_data['final_innovation_value'] = final_response.get('innovation_value', [])
+                        agent_data['final_time_value'] = final_response.get('time_value', [])
+                    
+                    elif "市場時機" in agent_name:
+                        agent_data['final_timing_analysis'] = final_response.get('timing_analysis', [])
+                        agent_data['final_technical_divergence'] = final_response.get('technical_divergence', [])
+                        agent_data['final_market_sentiment'] = final_response.get('market_sentiment', [])
+                    
+                    elif "風險管理" in agent_name:
+                        agent_data['final_hidden_risks'] = final_response.get('hidden_risks', [])
+                        agent_data['final_risk_quantification'] = final_response.get('risk_quantification', [])
+                        agent_data['final_extreme_scenarios'] = final_response.get('extreme_scenarios', [])
                     
                     # 分析立場變化原因
                     if initial_rec != final_rec:
