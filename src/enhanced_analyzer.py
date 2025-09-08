@@ -1121,21 +1121,6 @@ class EnhancedStockAnalyzer:
             
             logging.info(f"完成 {ticker} 的綜合分析")
             
-            # 將新聞數據添加到報告中
-            comprehensive_report['news_data'] = news_data
-            
-            # 自動儲存分析報告為MD檔
-            try:
-                md_filepath = self.save_analysis_report_as_markdown(
-                    comprehensive_report, 
-                    f"stock_analysis_{ticker}"
-                )
-                if md_filepath:
-                    comprehensive_report['markdown_report_path'] = md_filepath
-                    logging.info(f"已為 {ticker} 生成MD分析報告: {md_filepath}")
-            except Exception as md_error:
-                logging.warning(f"無法為 {ticker} 生成MD報告: {md_error}")
-            
             # 清理暫存資料
             if hasattr(self, '_current_stock_data'):
                 delattr(self, '_current_stock_data')
@@ -1548,7 +1533,7 @@ class EnhancedStockAnalyzer:
             return None
     
     def save_analysis_report_as_markdown(self, analysis_result: Dict, filename_prefix: str = "ai_analysis_report") -> str:
-        """將AI分析報告儲存為Markdown檔案"""
+        """將AI分析報告儲存為Markdown檔案（只包含專家分析過程）"""
         try:
             import os
             
@@ -1559,542 +1544,22 @@ class EnhancedStockAnalyzer:
             filename = f"{filename_prefix}_{timestamp}.md"
             filepath = os.path.join(output_dir, filename)
             
-            # 生成Markdown內容
-            markdown_content = self._generate_markdown_report(analysis_result)
+            # 生成專家分析過程的Markdown內容
+            markdown_content = self._generate_agents_analysis_markdown(analysis_result)
             
             # 寫入檔案
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(markdown_content)
             
-            logging.info(f"AI分析報告已保存為MD檔: {filepath}")
+            logging.info(f"專家分析過程報告已保存為MD檔: {filepath}")
             return filepath
             
         except Exception as e:
-            logging.error(f"保存MD報告失敗: {e}")
+            logging.error(f"保存專家分析MD報告失敗: {e}")
             return None
-    
-    def _generate_markdown_report(self, analysis_result: Dict) -> str:
-        """生成Markdown格式的分析報告"""
-        if not analysis_result or 'error' in analysis_result:
-            return f"# 分析報告錯誤\n\n錯誤訊息: {analysis_result.get('error', '未知錯誤')}"
-        
-        # 基本資訊
-        ticker = analysis_result.get('ticker', 'N/A')
-        company_name = analysis_result.get('company_name', 'N/A')
-        analysis_date = analysis_result.get('analysis_date', 'N/A')
-        overall_score = analysis_result.get('overall_score', 0)
-        investment_recommendation = analysis_result.get('investment_recommendation', 'N/A')
-        
-        # 開始生成Markdown內容
-        md_content = []
-        
-        # 標題和基本資訊
-        md_content.append(f"# 🤖 AI股票分析報告")
-        md_content.append("")
-        md_content.append(f"**股票代碼:** {ticker}")
-        md_content.append(f"**公司名稱:** {company_name}")
-        md_content.append(f"**分析時間:** {analysis_date}")
-        md_content.append(f"**綜合評分:** {overall_score}/100")
-        md_content.append(f"**投資建議:** {investment_recommendation}")
-        md_content.append("")
-        md_content.append("---")
-        md_content.append("")
-        
-        # 關鍵指標摘要
-        if 'key_metrics' in analysis_result:
-            md_content.append("## 📊 關鍵指標摘要")
-            md_content.append("")
-            
-            metrics = analysis_result['key_metrics']
-            
-            # 表格格式顯示關鍵指標
-            md_content.append("| 指標 | 數值 |")
-            md_content.append("|------|------|")
-            
-            if metrics.get('current_price'):
-                md_content.append(f"| 當前股價 | ${metrics['current_price']:.2f} |")
-            
-            if metrics.get('market_cap'):
-                market_cap_b = metrics['market_cap'] / 1e9
-                md_content.append(f"| 市值 | ${market_cap_b:.1f}B |")
-            
-            if metrics.get('pe_ratio'):
-                md_content.append(f"| 本益比 (P/E) | {metrics['pe_ratio']:.2f} |")
-            
-            if metrics.get('pb_ratio'):
-                md_content.append(f"| 股價淨值比 (P/B) | {metrics['pb_ratio']:.2f} |")
-            
-            if metrics.get('rsi'):
-                md_content.append(f"| RSI | {metrics['rsi']:.1f} |")
-            
-            if metrics.get('52w_position'):
-                md_content.append(f"| 52週高點位置 | {metrics['52w_position']:.1%} |")
-            
-            md_content.append("")
-        
-        # 基本面分析
-        if 'fundamental_analysis' in analysis_result:
-            md_content.append("## 📈 基本面分析")
-            md_content.append("")
-            
-            fundamental = analysis_result['fundamental_analysis']
-            md_content.append(f"**評分:** {fundamental.get('score', 0)}/100")
-            md_content.append("")
-            
-            # 基本面指標表格
-            md_content.append("| 財務指標 | 數值 |")
-            md_content.append("|----------|------|")
-            
-            if fundamental.get('pe_ratio'):
-                md_content.append(f"| 本益比 | {fundamental['pe_ratio']:.2f} |")
-            
-            if fundamental.get('pb_ratio'):
-                md_content.append(f"| 股價淨值比 | {fundamental['pb_ratio']:.2f} |")
-            
-            if fundamental.get('debt_ratio'):
-                md_content.append(f"| 負債比率 | {fundamental['debt_ratio']:.2f} |")
-            
-            if fundamental.get('roe'):
-                md_content.append(f"| 股東權益報酬率 (ROE) | {fundamental['roe']:.2%} |")
-            
-            if fundamental.get('profit_margin'):
-                md_content.append(f"| 利潤率 | {fundamental['profit_margin']:.2%} |")
-            
-            md_content.append("")
-        
-        # 技術面分析
-        if 'technical_analysis' in analysis_result:
-            md_content.append("## 📊 技術面分析")
-            md_content.append("")
-            
-            technical = analysis_result['technical_analysis']
-            md_content.append(f"**評分:** {technical.get('score', 0)}/100")
-            md_content.append("")
-            
-            md_content.append("| 技術指標 | 狀態 |")
-            md_content.append("|----------|------|")
-            
-            if technical.get('trend'):
-                md_content.append(f"| 趨勢方向 | {technical['trend']} |")
-            
-            if technical.get('rsi'):
-                rsi_status = "超買" if technical['rsi'] > 70 else "超賣" if technical['rsi'] < 30 else "正常"
-                md_content.append(f"| RSI ({technical['rsi']:.1f}) | {rsi_status} |")
-            
-            if technical.get('volume_signal'):
-                md_content.append(f"| 成交量訊號 | {technical['volume_signal']} |")
-            
-            if technical.get('price_momentum'):
-                md_content.append(f"| 價格動能 (20日) | {technical['price_momentum']:.2%} |")
-            
-            if technical.get('volatility'):
-                md_content.append(f"| 波動度 | {technical['volatility']:.2%} |")
-            
-            md_content.append("")
-        
-        # 新聞情緒分析
-        if 'news_sentiment_analysis' in analysis_result:
-            md_content.append("## 📰 新聞情緒分析")
-            md_content.append("")
-            
-            news = analysis_result['news_sentiment_analysis']
-            md_content.append(f"**評分:** {news.get('score', 0)}/100")
-            md_content.append(f"**情緒傾向:** {news.get('sentiment', 'neutral')}")
-            md_content.append(f"**信心度:** {news.get('confidence', 0):.1%}")
-            md_content.append(f"**情緒強度:** {news.get('sentiment_strength', 0):.1f}")
-            md_content.append(f"**新聞數量:** {news.get('news_count', 0)} 則")
-            md_content.append("")
-            
-            # 關鍵主題
-            if news.get('key_themes'):
-                md_content.append("### 🔍 關鍵主題")
-                for theme in news['key_themes']:
-                    md_content.append(f"- {theme}")
-                md_content.append("")
-            
-            # 風險因素
-            if news.get('risk_factors'):
-                md_content.append("### ⚠️ 風險因素")
-                for risk in news['risk_factors']:
-                    md_content.append(f"- {risk}")
-                md_content.append("")
-            
-            # 投資機會
-            if news.get('opportunities'):
-                md_content.append("### 💡 投資機會")
-                for opportunity in news['opportunities']:
-                    md_content.append(f"- {opportunity}")
-                md_content.append("")
-            
-            # 投資策略建議
-            if news.get('investment_strategy'):
-                md_content.append("### 🎯 投資策略建議")
-                md_content.append(news['investment_strategy'])
-                md_content.append("")
-            
-            # 注意事項
-            if news.get('attention_points'):
-                md_content.append("### 📌 注意事項")
-                for point in news['attention_points']:
-                    md_content.append(f"- {point}")
-                md_content.append("")
-            
-            # 新聞標題
-            if news.get('news_titles'):
-                md_content.append("### 📑 相關新聞標題")
-                for i, title in enumerate(news['news_titles'][:10], 1):  # 最多顯示10則
-                    md_content.append(f"{i}. {title}")
-                md_content.append("")
-            
-            # 新聞智能報告
-            if news.get('news_intelligence_report'):
-                md_content.append("### 🧠 新聞智能分析")
-                md_content.append(news['news_intelligence_report'])
-                md_content.append("")
-        
-        # 風險評估
-        if 'risk_assessment' in analysis_result:
-            md_content.append("## ⚠️ 風險評估")
-            md_content.append("")
-            
-            risk = analysis_result['risk_assessment']
-            
-            md_content.append("| 風險類型 | 等級 |")
-            md_content.append("|----------|------|")
-            
-            if risk.get('volatility_risk'):
-                md_content.append(f"| 波動風險 | {risk['volatility_risk']} |")
-            
-            if risk.get('valuation_risk'):
-                md_content.append(f"| 估值風險 | {risk['valuation_risk']} |")
-            
-            if risk.get('news_risk'):
-                md_content.append(f"| 新聞風險 | {risk['news_risk']} |")
-            
-            if risk.get('overall_risk'):
-                md_content.append(f"| **整體風險** | **{risk['overall_risk']}** |")
-            
-            md_content.append("")
-        
-        # 多代理人辯論結果 (如果有的話)
-        if 'multi_agent_debate' in analysis_result:
-            md_content.append("## 🗣️ 多代理人辯論分析")
-            md_content.append("")
-            
-            debate = analysis_result['multi_agent_debate']
-            
-            # 各專家獨立分析總結
-            if 'agents_analysis' in debate:
-                md_content.append("### 📋 各專家獨立分析總結")
-                md_content.append("")
-                md_content.append("以下是各領域專家在辯論前的獨立分析觀點：")
-                md_content.append("")
-                
-                for agent_name, agent_analysis in debate['agents_analysis'].items():
-                    agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
-                    initial_rec = agent_analysis.get('initial_recommendation', 'UNKNOWN')
-                    initial_confidence = agent_analysis.get('initial_confidence', 0)
-                    initial_reasoning = agent_analysis.get('initial_reasoning', '')
-                    initial_risk = agent_analysis.get('initial_risk_level', 'UNKNOWN')
-                    
-                    emoji = "🟢" if initial_rec == "BUY" else "🟡" if initial_rec == "HOLD" else "🔴" if initial_rec == "SELL" else "❓"
-                    
-                    md_content.append(f"#### {emoji} {agent_display} - 初始觀點")
-                    md_content.append(f"**初始建議:** {initial_rec}")
-                    md_content.append(f"**初始信心度:** {initial_confidence}/10")
-                    md_content.append(f"**風險評估:** {initial_risk}")
-                    
-                    # 目標價格
-                    if agent_analysis.get('initial_target_price_low') and agent_analysis.get('initial_target_price_high'):
-                        md_content.append(f"**目標價格區間:** ${agent_analysis['initial_target_price_low']:.2f} - ${agent_analysis['initial_target_price_high']:.2f}")
-                    
-                    md_content.append(f"**分析要點:** {initial_reasoning[:500]}{'...' if len(initial_reasoning) > 500 else ''}")
-                    
-                    # 專家特有的分析內容
-                    if "芒格" in agent_name:
-                        # 芒格多學科分析
-                        if agent_analysis.get('mental_models_applied'):
-                            md_content.append(f"**應用的心智模型:** {', '.join(agent_analysis['mental_models_applied'][:3])}")
-                        if agent_analysis.get('cognitive_biases_detected'):
-                            md_content.append(f"**識別的認知偏誤:** {', '.join(agent_analysis['cognitive_biases_detected'][:2])}")
-                        if agent_analysis.get('economic_moats'):
-                            md_content.append(f"**經濟護城河:** {', '.join(agent_analysis['economic_moats'][:2])}")
-                    
-                    elif "巴菲特" in agent_name:
-                        # 巴菲特價值投資分析
-                        if agent_analysis.get('competitive_position'):
-                            md_content.append(f"**競爭地位評估:** {', '.join(agent_analysis['competitive_position'][:2])}")
-                        if agent_analysis.get('margin_of_safety'):
-                            md_content.append(f"**安全邊際分析:** {', '.join(agent_analysis['margin_of_safety'][:2])}")
-                        if agent_analysis.get('management_quality'):
-                            md_content.append(f"**管理層品質:** {', '.join(agent_analysis['management_quality'][:2])}")
-                    
-                    elif "成長" in agent_name:
-                        # 成長投資分析
-                        if agent_analysis.get('growth_drivers'):
-                            md_content.append(f"**成長驅動因子:** {', '.join(agent_analysis['growth_drivers'][:3])}")
-                        if agent_analysis.get('innovation_value'):
-                            md_content.append(f"**創新價值評估:** {', '.join(agent_analysis['innovation_value'][:2])}")
-                        if agent_analysis.get('growth_potential'):
-                            md_content.append(f"**成長潛力:** {', '.join(agent_analysis['growth_potential'][:2])}")
-                    
-                    elif "市場時機" in agent_name:
-                        # 市場時機分析
-                        if agent_analysis.get('market_cycle'):
-                            md_content.append(f"**市場週期判斷:** {', '.join(agent_analysis['market_cycle'][:2])}")
-                        if agent_analysis.get('technical_signals'):
-                            md_content.append(f"**技術指標信號:** {', '.join(agent_analysis['technical_signals'][:3])}")
-                        if agent_analysis.get('timing_strategy'):
-                            md_content.append(f"**進場時機策略:** {', '.join(agent_analysis['timing_strategy'][:2])}")
-                    
-                    elif "風險管理" in agent_name:
-                        # 風險管理分析
-                        if agent_analysis.get('risk_factors'):
-                            md_content.append(f"**主要風險因素:** {', '.join(agent_analysis['risk_factors'][:3])}")
-                        if agent_analysis.get('hidden_risks'):
-                            md_content.append(f"**隱藏風險:** {', '.join(agent_analysis['hidden_risks'][:2])}")
-                        if agent_analysis.get('risk_management'):
-                            md_content.append(f"**風險控制建議:** {', '.join(agent_analysis['risk_management'][:2])}")
-                    
-                    md_content.append("")
-                
-                md_content.append("---")
-                md_content.append("")
-            
-            # 辯論過程與立場變化
-            if 'agents_analysis' in debate:
-                md_content.append("### 🔄 辯論過程與立場變化")
-                md_content.append("")
-                
-                has_position_changes = False
-                for agent_name, agent_analysis in debate['agents_analysis'].items():
-                    initial_rec = agent_analysis.get('initial_recommendation', 'UNKNOWN')
-                    final_rec = agent_analysis.get('recommendation', 'UNKNOWN')
-                    position_change_reason = agent_analysis.get('position_change_reason', '')
-                    
-                    if initial_rec != final_rec or position_change_reason:
-                        has_position_changes = True
-                        agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
-                        
-                        if initial_rec != final_rec:
-                            md_content.append(f"#### 🔄 {agent_display} - 立場變化")
-                            md_content.append(f"**原始立場:** {initial_rec} → **最終立場:** {final_rec}")
-                            if position_change_reason:
-                                md_content.append(f"**變化原因:** {position_change_reason}")
-                            md_content.append("")
-                        elif position_change_reason and position_change_reason != "立場保持一致":
-                            md_content.append(f"#### ✅ {agent_display} - 立場強化")
-                            md_content.append(f"**立場:** {final_rec} (保持一致)")
-                            md_content.append(f"**觀點深化:** {position_change_reason}")
-                            md_content.append("")
-                
-                if not has_position_changes:
-                    md_content.append("**所有專家在辯論過程中均保持其初始立場，顯示分析觀點具有一致性。**")
-                    md_content.append("")
-                
-                md_content.append("---")
-                md_content.append("")
-            
-            # 辯論輪次詳情
-            if 'debate_rounds' in debate and debate['debate_rounds']:
-                md_content.append("### 💬 辯論輪次詳情")
-                md_content.append("")
-                
-                for round_data in debate['debate_rounds']:
-                    round_num = round_data.get('round', 0)
-                    md_content.append(f"#### 第 {round_num} 輪辯論")
-                    md_content.append("")
-                    
-                    agent_responses = round_data.get('agent_responses', {})
-                    for agent_name, response in agent_responses.items():
-                        agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
-                        rec = response.get('recommendation', 'UNKNOWN')
-                        confidence = response.get('confidence', 0)
-                        
-                        # 提取反駁點和支持點
-                        rebuttal_points = response.get('rebuttal_points', [])
-                        support_points = response.get('support_points', [])
-                        
-                        emoji = "🟢" if rec == "BUY" else "🟡" if rec == "HOLD" else "🔴" if rec == "SELL" else "❓"
-                        
-                        md_content.append(f"**{emoji} {agent_display}** ({rec}, 信心度: {confidence}/10)")
-                        
-                        if rebuttal_points:
-                            md_content.append("- 反駁觀點:")
-                            for point in rebuttal_points[:3]:  # 最多顯示3個反駁點
-                                md_content.append(f"  • {point}")
-                        
-                        if support_points:
-                            md_content.append("- 支持觀點:")
-                            for point in support_points[:3]:  # 最多顯示3個支持點
-                                md_content.append(f"  • {point}")
-                        
-                        md_content.append("")
-                    
-                md_content.append("---")
-                md_content.append("")
-            
-            # 投票結果和最終立場
-            if 'voting_results' in debate:
-                voting = debate['voting_results']
-                
-                md_content.append("### 🗳️ 最終投票結果")
-                md_content.append("")
-                md_content.append("| 建議 | 票數 | 百分比 |")
-                md_content.append("|------|------|--------|")
-                
-                total_votes = voting.get('buy_votes', 0) + voting.get('hold_votes', 0) + voting.get('sell_votes', 0)
-                if total_votes > 0:
-                    buy_pct = voting.get('buy_votes', 0) / total_votes * 100
-                    hold_pct = voting.get('hold_votes', 0) / total_votes * 100
-                    sell_pct = voting.get('sell_votes', 0) / total_votes * 100
-                    
-                    md_content.append(f"| 🟢 買入 | {voting.get('buy_votes', 0)} | {buy_pct:.1f}% |")
-                    md_content.append(f"| 🟡 持有 | {voting.get('hold_votes', 0)} | {hold_pct:.1f}% |")
-                    md_content.append(f"| 🔴 賣出 | {voting.get('sell_votes', 0)} | {sell_pct:.1f}% |")
-                else:
-                    md_content.append(f"| 🟢 買入 | {voting.get('buy_votes', 0)} | - |")
-                    md_content.append(f"| 🟡 持有 | {voting.get('hold_votes', 0)} | - |")
-                    md_content.append(f"| 🔴 賣出 | {voting.get('sell_votes', 0)} | - |")
-                
-                md_content.append("")
-                md_content.append(f"**專家共識度:** {voting.get('consensus_level', 0):.1%}")
-                md_content.append("")
-                
-                # 專家最終立場詳細版
-                if 'agent_final_positions' in voting:
-                    md_content.append("### 👥 專家最終立場詳情")
-                    md_content.append("")
-                    
-                    for agent_name, position in voting['agent_final_positions'].items():
-                        agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
-                        rec = position.get('recommendation', 'UNKNOWN')
-                        confidence = position.get('confidence', 0)
-                        
-                        # 從agents_analysis中獲取更詳細的最終推理和分析欄位
-                        final_reasoning = ""
-                        target_price_info = ""
-                        professional_analysis = []
-                        
-                        if agent_name in debate.get('agents_analysis', {}):
-                            agent_data = debate['agents_analysis'][agent_name]
-                            final_reasoning = agent_data.get('reasoning', '')
-                            
-                            # 目標價格信息
-                            if agent_data.get('target_price_low') and agent_data.get('target_price_high'):
-                                target_price_info = f"目標價格: ${agent_data['target_price_low']:.2f} - ${agent_data['target_price_high']:.2f}"
-                            
-                            # 專家特有的專業分析
-                            if "芒格" in agent_name:
-                                if agent_data.get('final_mental_models_applied'):
-                                    professional_analysis.append(f"**應用心智模型:** {', '.join(agent_data['final_mental_models_applied'][:3])}")
-                                if agent_data.get('final_bias_corrections'):
-                                    professional_analysis.append(f"**偏誤糾正:** {', '.join(agent_data['final_bias_corrections'][:2])}")
-                                if agent_data.get('final_statistical_challenges'):
-                                    professional_analysis.append(f"**統計質疑:** {', '.join(agent_data['final_statistical_challenges'][:2])}")
-                            
-                            elif "巴菲特" in agent_name:
-                                if agent_data.get('final_long_term_perspective'):
-                                    professional_analysis.append(f"**長期視角:** {', '.join(agent_data['final_long_term_perspective'][:2])}")
-                                if agent_data.get('final_simplicity_test'):
-                                    professional_analysis.append(f"**簡單性檢驗:** {', '.join(agent_data['final_simplicity_test'][:2])}")
-                                if agent_data.get('final_margin_of_safety'):
-                                    professional_analysis.append(f"**安全邊際:** {', '.join(agent_data['final_margin_of_safety'][:2])}")
-                            
-                            elif "成長" in agent_name:
-                                if agent_data.get('final_growth_potential'):
-                                    professional_analysis.append(f"**成長潛力:** {', '.join(agent_data['final_growth_potential'][:2])}")
-                                if agent_data.get('final_innovation_value'):
-                                    professional_analysis.append(f"**創新價值:** {', '.join(agent_data['final_innovation_value'][:2])}")
-                                if agent_data.get('final_time_value'):
-                                    professional_analysis.append(f"**時間價值:** {', '.join(agent_data['final_time_value'][:2])}")
-                            
-                            elif "市場時機" in agent_name:
-                                if agent_data.get('final_timing_analysis'):
-                                    professional_analysis.append(f"**時機分析:** {', '.join(agent_data['final_timing_analysis'][:2])}")
-                                if agent_data.get('final_technical_divergence'):
-                                    professional_analysis.append(f"**技術面分歧:** {', '.join(agent_data['final_technical_divergence'][:2])}")
-                                if agent_data.get('final_market_sentiment'):
-                                    professional_analysis.append(f"**市場情緒:** {', '.join(agent_data['final_market_sentiment'][:2])}")
-                            
-                            elif "風險管理" in agent_name:
-                                if agent_data.get('final_hidden_risks'):
-                                    professional_analysis.append(f"**隱藏風險:** {', '.join(agent_data['final_hidden_risks'][:2])}")
-                                if agent_data.get('final_risk_quantification'):
-                                    professional_analysis.append(f"**風險量化:** {', '.join(agent_data['final_risk_quantification'][:2])}")
-                                if agent_data.get('final_extreme_scenarios'):
-                                    professional_analysis.append(f"**極端情境:** {', '.join(agent_data['final_extreme_scenarios'][:2])}")
-                            
-                            # 最終反駁和支持點
-                            if agent_data.get('final_rebuttal_points'):
-                                professional_analysis.append(f"**主要反駁:** {'; '.join(agent_data['final_rebuttal_points'][:2])}")
-                            if agent_data.get('final_support_points'):
-                                professional_analysis.append(f"**主要支持:** {'; '.join(agent_data['final_support_points'][:2])}")
-                        
-                        emoji = "🟢" if rec == "BUY" else "🟡" if rec == "HOLD" else "🔴" if rec == "SELL" else "❓"
-                        
-                        md_content.append(f"#### {emoji} {agent_display}")
-                        md_content.append(f"**最終建議:** {rec}")
-                        md_content.append(f"**信心度:** {confidence}/10")
-                        if target_price_info:
-                            md_content.append(target_price_info)
-                        if final_reasoning:
-                            md_content.append(f"**最終理由:** {final_reasoning[:400]}{'...' if len(final_reasoning) > 400 else ''}")
-                        
-                        # 顯示專業分析
-                        for analysis_item in professional_analysis:
-                            md_content.append(analysis_item)
-                        
-                        md_content.append("")
-            
-            # 辯論總結
-            if 'debate_summary' in debate:
-                md_content.append("### 📝 辯論總結")
-                md_content.append("")
-                md_content.append(debate['debate_summary'])
-                md_content.append("")
-            
-            # 最終共識
-            if 'final_consensus' in debate:
-                consensus = debate['final_consensus']
-                md_content.append("### 🤝 專家團隊最終共識")
-                md_content.append("")
-                md_content.append(f"**共識建議:** {consensus.get('final_recommendation', 'UNKNOWN')}")
-                md_content.append(f"**平均信心度:** {consensus.get('average_confidence', 0):.1f}/10")
-                md_content.append(f"**共識等級:** {consensus.get('consensus_level', 0):.1%}")
-                md_content.append("")
-                
-                if consensus.get('supporting_points'):
-                    md_content.append("**主要支持論點:**")
-                    for point in consensus['supporting_points']:
-                        md_content.append(f"- {point}")
-                    md_content.append("")
-                
-                if consensus.get('opposing_points'):
-                    md_content.append("**主要反對論點:**")
-                    for point in consensus['opposing_points']:
-                        md_content.append(f"- {point}")
-                    md_content.append("")
-            
-            md_content.append("---")
-            md_content.append("")
-        
-        # 結論
-        md_content.append("---")
-        md_content.append("")
-        md_content.append("## 📝 結論")
-        md_content.append("")
-        md_content.append(f"基於綜合分析，{company_name} ({ticker}) 獲得 **{overall_score}/100** 的評分，")
-        md_content.append(f"投資建議為：**{investment_recommendation}**")
-        md_content.append("")
-        md_content.append("⚠️ **免責聲明:** 本報告僅供參考，不構成投資建議。投資有風險，請謹慎決策。")
-        md_content.append("")
-        md_content.append(f"*報告生成時間: {analysis_date}*")
-        
-        return "\n".join(md_content)
-    
-    def save_portfolio_summary_as_markdown(self, portfolio_results: Dict, portfolio_name: str = "portfolio") -> str:
-        """將投資組合分析摘要儲存為Markdown檔案"""
+
+    def save_agents_analysis_as_markdown(self, analysis_result: Dict, filename_prefix: str = "agents_analysis") -> str:
+        """將各專家詳細分析過程儲存為Markdown檔案"""
         try:
             import os
             
@@ -2102,185 +1567,144 @@ class EnhancedStockAnalyzer:
             os.makedirs(output_dir, exist_ok=True)
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{portfolio_name}_summary_{timestamp}.md"
+            filename = f"{filename_prefix}_{timestamp}.md"
             filepath = os.path.join(output_dir, filename)
             
-            # 生成投資組合摘要Markdown內容
-            markdown_content = self._generate_portfolio_summary_markdown(portfolio_results, portfolio_name)
+            # 生成專家分析過程的Markdown內容
+            markdown_content = self._generate_agents_analysis_markdown(analysis_result)
             
             # 寫入檔案
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(markdown_content)
             
-            logging.info(f"投資組合摘要報告已保存為MD檔: {filepath}")
+            logging.info(f"各專家分析過程已保存為MD檔: {filepath}")
             return filepath
             
         except Exception as e:
-            logging.error(f"保存投資組合MD摘要失敗: {e}")
+            logging.error(f"保存專家分析MD報告失敗: {e}")
             return None
-    
-    def _generate_portfolio_summary_markdown(self, portfolio_results: Dict, portfolio_name: str) -> str:
-        """生成投資組合摘要Markdown格式報告"""
+
+    def _generate_agents_analysis_markdown(self, analysis_result: Dict) -> str:
+        """生成各專家詳細分析過程的Markdown格式報告"""
+        if not analysis_result or 'error' in analysis_result:
+            return f"# 專家分析報告錯誤\n\n錯誤訊息: {analysis_result.get('error', '未知錯誤')}"
+        
+        # 基本資訊
+        ticker = analysis_result.get('ticker', 'N/A')
+        company_name = analysis_result.get('company_name', 'N/A')
+        analysis_date = analysis_result.get('analysis_date', 'N/A')
+        
+        # 開始生成Markdown內容
         md_content = []
         
-        # 標題
-        md_content.append(f"# 📊 投資組合分析摘要報告")
+        # 標題和基本資訊
+        md_content.append(f"# 🔍 各專家詳細分析過程")
         md_content.append("")
-        md_content.append(f"**投資組合:** {portfolio_name}")
-        md_content.append(f"**分析時間:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        md_content.append(f"**股票代碼:** {ticker}")
+        md_content.append(f"**公司名稱:** {company_name}")
+        md_content.append(f"**分析時間:** {analysis_date}")
         md_content.append("")
         md_content.append("---")
         md_content.append("")
         
-        # 分析統計
-        total_stocks = len(portfolio_results)
-        successful_analyses = len([r for r in portfolio_results.values() if r.get('status') == 'success'])
-        failed_analyses = total_stocks - successful_analyses
+        # 檢查是否有多代理人辯論結果
+        if 'multi_agent_debate' not in analysis_result:
+            md_content.append("## ❌ 無多代理人辯論數據")
+            md_content.append("此分析結果中不包含多代理人辯論信息。")
+            return "\n".join(md_content)
         
-        md_content.append("## 📈 分析統計")
-        md_content.append("")
-        md_content.append("| 項目 | 數量 |")
-        md_content.append("|------|------|")
-        md_content.append(f"| 總股票數 | {total_stocks} |")
-        md_content.append(f"| 成功分析 | {successful_analyses} |")
-        md_content.append(f"| 分析失敗 | {failed_analyses} |")
-        md_content.append(f"| 成功率 | {(successful_analyses/total_stocks*100):.1f}% |")
-        md_content.append("")
+        debate = analysis_result['multi_agent_debate']
         
-        # 投資建議統計
-        recommendations = {}
-        risk_levels = {}
-        scores = []
+        if 'agents_analysis' not in debate:
+            md_content.append("## ❌ 無專家分析數據")
+            md_content.append("此辯論結果中不包含各專家的分析信息。")
+            return "\n".join(md_content)
         
-        for ticker, result in portfolio_results.items():
-            if result.get('status') == 'success' and 'analysis' in result:
-                analysis = result['analysis']
-                
-                # 投資建議統計
-                rec = analysis.get('investment_recommendation', 'Unknown')
-                recommendations[rec] = recommendations.get(rec, 0) + 1
-                
-                # 風險等級統計
-                if 'risk_assessment' in analysis:
-                    risk = analysis['risk_assessment'].get('overall_risk', 'Unknown')
-                    risk_levels[risk] = risk_levels.get(risk, 0) + 1
-                
-                # 評分收集
-                score = analysis.get('overall_score', 0)
-                if score > 0:
-                    scores.append((ticker, score))
-        
-        # 投資建議分布
-        if recommendations:
-            md_content.append("## 💡 投資建議分布")
-            md_content.append("")
-            md_content.append("| 建議 | 股票數 | 佔比 |")
-            md_content.append("|------|--------|------|")
-            
-            for rec, count in sorted(recommendations.items(), key=lambda x: x[1], reverse=True):
-                percentage = (count / successful_analyses * 100)
-                md_content.append(f"| {rec} | {count} | {percentage:.1f}% |")
-            
-            md_content.append("")
-        
-        # 風險等級分布
-        if risk_levels:
-            md_content.append("## ⚠️ 風險等級分布")
-            md_content.append("")
-            md_content.append("| 風險等級 | 股票數 | 佔比 |")
-            md_content.append("|----------|--------|------|")
-            
-            for risk, count in sorted(risk_levels.items(), key=lambda x: x[1], reverse=True):
-                percentage = (count / successful_analyses * 100)
-                md_content.append(f"| {risk} | {count} | {percentage:.1f}% |")
-            
-            md_content.append("")
-        
-        # 排名前10的股票
-        if scores:
-            scores.sort(key=lambda x: x[1], reverse=True)
-            top_10 = scores[:10]
-            
-            md_content.append("## 🏆 評分排名前10")
-            md_content.append("")
-            md_content.append("| 排名 | 股票代碼 | 評分 | 建議 | 風險等級 |")
-            md_content.append("|------|----------|------|------|----------|")
-            
-            for i, (ticker, score) in enumerate(top_10, 1):
-                result = portfolio_results.get(ticker, {})
-                analysis = result.get('analysis', {})
-                rec = analysis.get('investment_recommendation', 'N/A')
-                risk = analysis.get('risk_assessment', {}).get('overall_risk', 'N/A')
-                
-                md_content.append(f"| {i} | {ticker} | {score:.1f} | {rec} | {risk} |")
-            
-            md_content.append("")
-        
-        # 詳細分析連結
-        md_content.append("## 📋 個股詳細分析")
-        md_content.append("")
-        md_content.append("以下為各股票的詳細分析連結：")
+        # 各專家詳細分析過程
+        md_content.append("## 🔍 各專家詳細分析過程")
         md_content.append("")
         
-        for ticker, result in portfolio_results.items():
-            if result.get('status') == 'success' and 'analysis' in result:
-                analysis = result['analysis']
-                score = analysis.get('overall_score', 0)
-                rec = analysis.get('investment_recommendation', 'N/A')
-                
-                # 檢查是否有個別的MD報告
-                if 'markdown_report_path' in analysis:
-                    import os
-                    md_report_file = os.path.basename(analysis['markdown_report_path'])
-                    md_content.append(f"- **{ticker}** (評分: {score:.1f}, 建議: {rec}) - [詳細報告]({md_report_file})")
-                else:
-                    md_content.append(f"- **{ticker}** (評分: {score:.1f}, 建議: {rec})")
+        agents_data = debate['agents_analysis']
         
-        md_content.append("")
-        
-        # 總結建議
-        md_content.append("## 📝 總結建議")
-        md_content.append("")
-        
-        if scores:
-            avg_score = sum(score for _, score in scores) / len(scores)
-            md_content.append(f"**平均評分:** {avg_score:.1f}/100")
+        for agent_name, agent_info in agents_data.items():
+            agent_display = agent_name.replace('派', '').replace('投資師', '').replace('分析師', '').replace('專家', '')
+            
+            md_content.append(f"### 📊 {agent_display}")
             md_content.append("")
             
-            # 根據評分給出總體建議
-            if avg_score >= 75:
-                md_content.append("🟢 **整體評估:** 此投資組合表現優秀，大多數股票具有良好的投資價值。")
-            elif avg_score >= 60:
-                md_content.append("🟡 **整體評估:** 此投資組合表現中等，建議重點關注高評分股票。")
+            # 初期獨立分析
+            md_content.append("#### 🔍 初期獨立分析")
+            initial_rec = agent_info.get('initial_recommendation', 'N/A')
+            initial_conf = agent_info.get('initial_confidence', 0)
+            initial_reason = agent_info.get('initial_reasoning', '無資料')
+            initial_risk = agent_info.get('initial_risk_level', 'N/A')
+            
+            # 建議狀態顯示
+            if initial_rec == 'BUY':
+                md_content.append(f"**建議:** 🟢 買入建議 (信心度: {initial_conf}/10)")
+            elif initial_rec == 'SELL':
+                md_content.append(f"**建議:** 🔴 賣出建議 (信心度: {initial_conf}/10)")
+            elif initial_rec == 'HOLD':
+                md_content.append(f"**建議:** 🟡 持有建議 (信心度: {initial_conf}/10)")
             else:
-                md_content.append("🔴 **整體評估:** 此投資組合整體評分較低，建議謹慎投資或重新篩選。")
-        
-        md_content.append("")
-        md_content.append("### 投資建議")
-        
-        # 根據建議分布給出策略建議
-        if recommendations:
-            buy_ratio = recommendations.get('強烈買入', 0) + recommendations.get('買入', 0)
-            buy_percentage = (buy_ratio / successful_analyses * 100) if successful_analyses > 0 else 0
+                md_content.append(f"**建議:** {initial_rec} (信心度: {initial_conf}/10)")
             
-            if buy_percentage >= 50:
-                md_content.append("- 💰 **積極配置策略:** 投資組合中多數股票獲得買入建議，可考慮積極配置")
-            elif buy_percentage >= 30:
-                md_content.append("- 📊 **平衡配置策略:** 投資組合中部分股票值得投資，建議均衡配置")
+            md_content.append(f"**風險評估:** {initial_risk}")
+            md_content.append("")
+            md_content.append(f"**理由:** {initial_reason}")
+            md_content.append("")
+            
+            # 辯論後最終立場
+            md_content.append("#### 🗣️ 辯論後最終立場")
+            final_rec = agent_info.get('recommendation', 'N/A')
+            final_conf = agent_info.get('confidence', 0)
+            final_reason = agent_info.get('reasoning', '無資料')
+            final_risk = agent_info.get('risk_level', 'N/A')
+            
+            # 最終建議狀態顯示
+            if final_rec == 'BUY':
+                md_content.append(f"**建議:** 🟢 買入建議 (信心度: {final_conf}/10)")
+            elif final_rec == 'SELL':
+                md_content.append(f"**建議:** 🔴 賣出建議 (信心度: {final_conf}/10)")
+            elif final_rec == 'HOLD':
+                md_content.append(f"**建議:** 🟡 持有建議 (信心度: {final_conf}/10)")
             else:
-                md_content.append("- 🛡️ **保守配置策略:** 投資組合中買入機會較少，建議保守配置或等待更好時機")
+                md_content.append(f"**建議:** {final_rec} (信心度: {final_conf}/10)")
+            
+            md_content.append(f"**風險評估:** {final_risk}")
+            md_content.append("")
+            md_content.append(f"**理由:** {final_reason}")
+            md_content.append("")
+            
+            # 立場變化分析
+            if initial_rec != final_rec or abs(initial_conf - final_conf) > 1:
+                md_content.append("#### 🔄 立場變化")
+                
+                if initial_rec != final_rec:
+                    md_content.append(f"• 建議從 **{initial_rec}** 改為 **{final_rec}**")
+                
+                conf_change = final_conf - initial_conf
+                if conf_change > 0:
+                    md_content.append(f"• 信心度提升 {conf_change:.1f} 分")
+                elif conf_change < 0:
+                    md_content.append(f"• 信心度下降 {abs(conf_change):.1f} 分")
+                
+                # 變化原因
+                change_reason = agent_info.get('position_change_reason', '')
+                if change_reason:
+                    md_content.append(f"• **變化原因:** {change_reason}")
+                
+                md_content.append("")
+            else:
+                md_content.append("#### ✅ 立場保持一致")
+                md_content.append("")
+            
+            md_content.append("---")
+            md_content.append("")
         
-        md_content.append("- 📈 **建議關注高評分股票，逐步建立倉位**")
-        md_content.append("- ⚠️ **注意風險控制，避免過度集中在單一股票**")
-        md_content.append("- 📊 **定期檢視投資組合表現，適時調整配置**")
+        # 添加報告生成時間
         md_content.append("")
-        
-        # 免責聲明
-        md_content.append("---")
-        md_content.append("")
-        md_content.append("⚠️ **免責聲明:** 本報告僅供參考，不構成投資建議。投資有風險，請根據個人風險承受能力謹慎決策。")
-        md_content.append("")
-        md_content.append(f"*報告生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        md_content.append(f"*報告生成時間: {analysis_date}*")
         
         return "\n".join(md_content)
 
@@ -3262,6 +2686,18 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                 base_analysis['integrated_recommendation'] = self._integrate_analyses(
                     base_analysis, debate_result
                 )
+                
+                # 自動生成專家分析過程的MD檔案
+                try:
+                    agents_md_filepath = self.save_agents_analysis_as_markdown(
+                        base_analysis, 
+                        f"agents_analysis_{stock_symbol}"
+                    )
+                    if agents_md_filepath:
+                        base_analysis['agents_markdown_report_path'] = agents_md_filepath
+                        logging.info(f"已為 {stock_symbol} 生成專家分析過程MD報告: {agents_md_filepath}")
+                except Exception as md_error:
+                    logging.warning(f"無法為 {stock_symbol} 生成專家分析過程MD報告: {md_error}")
                 
                 # 更新狀態：完成分析
                 if self.status_manager:

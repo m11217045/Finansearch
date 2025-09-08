@@ -83,7 +83,7 @@ def main():
     # 主要內容區域
     tab1, tab2, tab3 = st.tabs([
         "🔍 股票篩選與AI分析", 
-        "💼 持股管理", 
+        "💼 持股管理",
         "📊 持股AI分析"
     ])
     
@@ -94,7 +94,7 @@ def main():
         portfolio_management_interface()
     
     with tab3:
-        portfolio_analysis_interface()
+        portfolio_ai_analysis_interface()
 
 
 def setup_sidebar():
@@ -290,16 +290,12 @@ def combined_screening_ai_interface():
     with col2:
         st.markdown("### 設置")
         
-        # AI 分析設置（僅在 API 可用時顯示）
+        # AI 分析設置顯示（僅在 API 可用時顯示）
         if api_available:
-            max_analysis = st.number_input(
-                "AI 分析股票數量",
-                min_value=1,
-                max_value=10,
-                value=st.session_state.get('max_analysis', 5),
-                help="選擇要進行 AI 分析的股票數量"
-            )
-            st.session_state['max_analysis'] = max_analysis
+            # 顯示當前設置值
+            current_max_analysis = st.session_state.get('max_analysis', 5)
+            st.info(f"📊 AI 分析股票數量：{current_max_analysis} 檔")
+            st.caption("💡 可在左側邊欄調整數量")
             
             # 多代理人辯論設置顯示
             enable_debate = st.session_state.get('enable_debate', False)
@@ -655,7 +651,7 @@ def portfolio_management_interface():
             st.info("📝 還沒有持股資料，請先新增股票")
 
 
-def portfolio_analysis_interface():
+def portfolio_ai_analysis_interface():
     """持股AI分析介面"""
     st.markdown('<h2 class="sub-header">📊 持股AI分析</h2>', unsafe_allow_html=True)
     
@@ -720,7 +716,7 @@ def portfolio_analysis_interface():
     if us_stocks:
         st.markdown("#### 🇺🇸 美股")
         for i, stock in enumerate(us_stocks):
-            col1, col2, col3 = st.columns([3, 1, 1])
+            col1, col2 = st.columns([4, 1])
             
             with col1:
                 status = "✅" if stock['included'] else "❌"
@@ -748,7 +744,7 @@ def portfolio_analysis_interface():
     if tw_stocks:
         st.markdown("#### 🇹🇼 台股")
         for i, stock in enumerate(tw_stocks):
-            col1, col2, col3 = st.columns([3, 1, 1])
+            col1, col2 = st.columns([4, 1])
             
             with col1:
                 status = "✅" if stock['included'] else "❌"
@@ -919,15 +915,6 @@ def analyze_selected_portfolio(tickers, enable_debate=True, save_results=True):
         st.session_state['portfolio_ai_results'] = results
         st.session_state['portfolio_ai_summary'] = generate_portfolio_ai_summary(results)
         
-        # 生成投資組合摘要MD報告
-        try:
-            portfolio_md_path = analyzer.save_portfolio_summary_as_markdown(results, "portfolio_analysis")
-            if portfolio_md_path:
-                st.session_state['portfolio_md_report_path'] = portfolio_md_path
-                logging.info(f"已生成投資組合摘要MD報告: {portfolio_md_path}")
-        except Exception as md_error:
-            logging.warning(f"無法生成投資組合摘要MD報告: {md_error}")
-        
         # 清除狀態顯示
         status_container.empty()
         
@@ -999,24 +986,6 @@ def display_portfolio_ai_results():
         with col_sum4:
             success_rate = (summary['successful_analyses'] / summary['total_stocks']) * 100
             st.metric("成功率", f"{success_rate:.1f}%")
-        
-        # 添加投資組合摘要MD報告下載按鈕
-        if 'portfolio_md_report_path' in st.session_state:
-            md_path = st.session_state['portfolio_md_report_path']
-            try:
-                if os.path.exists(md_path):
-                    with open(md_path, 'r', encoding='utf-8') as f:
-                        md_content = f.read()
-                    
-                    st.download_button(
-                        label="📄 下載投資組合摘要報告 (MD)",
-                        data=md_content,
-                        file_name=f"portfolio_summary_{datetime.now().strftime('%Y%m%d')}.md",
-                        mime="text/markdown",
-                        use_container_width=True
-                    )
-            except Exception as e:
-                st.warning(f"無法載入投資組合摘要報告: {e}")
     
     # 顯示詳細結果
     st.markdown("#### 📋 詳細分析結果")
@@ -1039,25 +1008,63 @@ def display_single_stock_ai_analysis(ticker, result):
     stock_data = result.get('stock_data', {})
     
     # 添加MD報告下載功能
+    download_buttons = []
+    
+    # 完整分析報告下載
     if 'markdown_report_path' in analysis:
         md_path = analysis['markdown_report_path']
         try:
             if os.path.exists(md_path):
                 with open(md_path, 'r', encoding='utf-8') as f:
                     md_content = f.read()
-                
-                # 創建下載按鈕
-                col_download, col_spacer = st.columns([1, 3])
-                with col_download:
-                    st.download_button(
-                        label="📄 下載MD分析報告",
-                        data=md_content,
-                        file_name=f"{ticker}_analysis_report_{datetime.now().strftime('%Y%m%d')}.md",
-                        mime="text/markdown",
-                        use_container_width=True
-                    )
+                download_buttons.append(("📄 下載完整分析報告", md_content, f"{ticker}_analysis_report_{datetime.now().strftime('%Y%m%d')}.md"))
         except Exception as e:
-            st.warning(f"無法載入MD報告: {e}")
+            st.warning(f"無法載入完整分析MD報告: {e}")
+    
+    # 專家分析過程報告下載
+    if 'agents_markdown_report_path' in analysis:
+        agents_md_path = analysis['agents_markdown_report_path']
+        try:
+            if os.path.exists(agents_md_path):
+                with open(agents_md_path, 'r', encoding='utf-8') as f:
+                    agents_md_content = f.read()
+                download_buttons.append(("🔍 下載專家分析過程", agents_md_content, f"{ticker}_agents_analysis_{datetime.now().strftime('%Y%m%d')}.md"))
+        except Exception as e:
+            st.warning(f"無法載入專家分析過程MD報告: {e}")
+    
+    # 顯示下載按鈕
+    if download_buttons:
+        if len(download_buttons) == 1:
+            col_download, col_spacer = st.columns([1, 3])
+            with col_download:
+                label, data, filename = download_buttons[0]
+                st.download_button(
+                    label=label,
+                    data=data,
+                    file_name=filename,
+                    mime="text/markdown",
+                    use_container_width=True
+                )
+        else:
+            col_download1, col_download2, col_spacer = st.columns([1, 1, 2])
+            with col_download1:
+                label, data, filename = download_buttons[0]
+                st.download_button(
+                    label=label,
+                    data=data,
+                    file_name=filename,
+                    mime="text/markdown",
+                    use_container_width=True
+                )
+            with col_download2:
+                label, data, filename = download_buttons[1]
+                st.download_button(
+                    label=label,
+                    data=data,
+                    file_name=filename,
+                    mime="text/markdown",
+                    use_container_width=True
+                )
     
     # 基本資訊
     col1, col2, col3, col4 = st.columns(4)
@@ -1407,21 +1414,8 @@ def ai_analysis_interface():
         st.error("請先設置 Gemini API Key 才能使用 AI 分析功能")
         return
     
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        if st.button("🚀 開始 Gemini AI 分析", use_container_width=True):
-            run_ai_analysis()
-    
-    with col2:
-        max_analysis = st.number_input(
-            "分析股票數量",
-            min_value=1,
-            max_value=10,
-            value=min(5, len(st.session_state['top_stocks'])),
-            help="選擇要進行 AI 分析的股票數量"
-        )
-        st.session_state['max_analysis'] = max_analysis
+    if st.button("🚀 開始 Gemini AI 分析", use_container_width=True):
+        run_ai_analysis()
     
     # 顯示分析結果
     if 'ai_analysis_results' in st.session_state:
@@ -1904,7 +1898,8 @@ def run_ai_analysis():
         # 創建狀態顯示區域
         status_container = st.empty()
         
-        # 初始化分析器
+        # 初始化數據獲取器和分析器
+        fetcher = MultiMarketDataFetcher()
         analyzer = EnhancedStockAnalyzerWithDebate(
             enable_debate=enable_debate,
             status_manager=analysis_status_manager
@@ -1924,18 +1919,27 @@ def run_ai_analysis():
                 analysis_status_manager.display_portfolio_status()
             
             try:
-                # 執行AI分析
-                analysis_result = analyzer.analyze_stock_comprehensive(
-                    stock_data, 
-                    include_debate=enable_debate
-                )
+                # 獲取完整的股票數據（修復：使用數據獲取器獲取完整數據）
+                full_stock_data = fetcher.get_stock_data(ticker)
                 
-                # 儲存結果
-                results[ticker] = {
-                    'stock_data': stock_data,
-                    'analysis': analysis_result,
-                    'status': 'success'
-                }
+                if full_stock_data and 'error' not in full_stock_data:
+                    # 執行AI分析（使用完整的股票數據）
+                    analysis_result = analyzer.analyze_stock_comprehensive(
+                        full_stock_data,  # 使用完整數據而不是篩選的dict
+                        include_debate=enable_debate
+                    )
+                    
+                    # 儲存結果
+                    results[ticker] = {
+                        'stock_data': full_stock_data,  # 使用完整數據
+                        'analysis': analysis_result,
+                        'status': 'success'
+                    }
+                else:
+                    results[ticker] = {
+                        'error': f"無法獲取 {ticker} 的數據",
+                        'status': 'error'
+                    }
                 
             except Exception as e:
                 logging.error(f"分析 {ticker} 時發生錯誤: {e}")
@@ -2650,167 +2654,6 @@ def show_screening_results():
     with col4:
         count_low_debt = (df['debt_to_equity'] < 0.5).sum() if 'debt_to_equity' in df.columns else 0
         st.metric("低負債股票", f"{count_low_debt} 支")
-
-
-def analyze_my_portfolio(tickers: list, enable_debate: bool = False):
-    """分析個人持股"""
-    try:
-        analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=enable_debate)
-        
-        # 將股票代碼轉換為分析器需要的格式
-        stock_list = []
-        for ticker in tickers:
-            stock_data = {
-                'ticker': ticker,
-                'symbol': ticker,
-                'company_name': ticker  # 簡化版，實際應該獲取公司名稱
-            }
-            stock_list.append(stock_data)
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # 執行分析
-        analysis_results = []
-        for i, stock_data in enumerate(stock_list):
-            ticker = stock_data['ticker']
-            
-            if enable_debate:
-                status_text.text(f"正在進行多代理人辯論分析 {ticker}... ({i+1}/{len(stock_list)})")
-            else:
-                status_text.text(f"正在分析 {ticker}... ({i+1}/{len(stock_list)})")
-            
-            result = analyzer.analyze_stock_comprehensive(stock_data, include_debate=enable_debate)
-            analysis_results.append(result)
-            
-            progress_bar.progress((i + 1) / len(stock_list))
-        
-        st.session_state['portfolio_analysis_results'] = analysis_results
-        
-        status_text.text("持股分析完成！")
-        success_count = len([r for r in analysis_results if 'error' not in r])
-        st.success(f"成功完成 {success_count}/{len(tickers)} 支股票的分析")
-        
-        # 生成持股摘要
-        generate_portfolio_summary(analysis_results, enable_debate)
-        
-    except Exception as e:
-        st.error(f"分析過程中發生錯誤: {e}")
-
-
-def generate_portfolio_summary(analysis_results: list, enable_debate: bool):
-    """生成持股分析摘要"""
-    try:
-        successful_results = [r for r in analysis_results if 'error' not in r]
-        
-        if not successful_results:
-            return
-        
-        # 統計投資建議分佈
-        recommendations = {}
-        scores = []
-        risk_levels = {}
-        
-        for result in successful_results:
-            # 投資建議統計
-            rec = result.get('investment_recommendation', 'HOLD')
-            recommendations[rec] = recommendations.get(rec, 0) + 1
-            
-            # 評分統計
-            score = result.get('overall_score', 0)
-            scores.append(score)
-            
-            # 風險統計
-            risk = result.get('risk_assessment', {}).get('overall_risk', 'MEDIUM')
-            risk_levels[risk] = risk_levels.get(risk, 0) + 1
-        
-        # 將摘要存儲到 session state
-        portfolio_summary = {
-            'total_stocks': len(analysis_results),
-            'successful_analysis': len(successful_results),
-            'average_score': sum(scores) / len(scores) if scores else 0,
-            'recommendations': recommendations,
-            'risk_distribution': risk_levels,
-            'enable_debate': enable_debate
-        }
-        
-        st.session_state['portfolio_summary'] = portfolio_summary
-        
-    except Exception as e:
-        st.error(f"生成摘要時發生錯誤: {e}")
-
-
-def display_portfolio_analysis_results():
-    """顯示持股分析結果"""
-    if 'portfolio_analysis_results' not in st.session_state:
-        st.warning("尚未進行持股分析")
-        return
-    
-    results = st.session_state['portfolio_analysis_results']
-    
-    # 顯示摘要
-    if 'portfolio_summary' in st.session_state:
-        summary = st.session_state['portfolio_summary']
-        
-        st.markdown("#### 📊 持股分析摘要")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("總持股", f"{summary['total_stocks']} 支")
-        
-        with col2:
-            success_rate = summary['successful_analysis'] / summary['total_stocks'] * 100 if summary['total_stocks'] > 0 else 0
-            st.metric("分析成功率", f"{success_rate:.0f}%")
-        
-        with col3:
-            st.metric("平均評分", f"{summary['average_score']:.1f}")
-        
-        with col4:
-            enable_debate = summary.get('enable_debate', False)
-            debate_status = "已啟用" if enable_debate else "未啟用"
-            st.metric("多代理人辯論", debate_status)
-        
-        # 投資建議分佈
-        if summary['recommendations']:
-            st.markdown("#### 📈 投資建議分佈")
-            rec_col1, rec_col2, rec_col3 = st.columns(3)
-            
-            with rec_col1:
-                buy_count = summary['recommendations'].get('BUY', 0)
-                st.metric("建議買入", f"{buy_count} 支", delta=f"{buy_count/summary['total_stocks']*100:.0f}%")
-            
-            with rec_col2:
-                hold_count = summary['recommendations'].get('HOLD', 0)
-                st.metric("建議持有", f"{hold_count} 支", delta=f"{hold_count/summary['total_stocks']*100:.0f}%")
-            
-            with rec_col3:
-                sell_count = summary['recommendations'].get('SELL', 0)
-                st.metric("建議賣出", f"{sell_count} 支", delta=f"{sell_count/summary['total_stocks']*100:.0f}%")
-    
-    # 顯示個別股票詳細分析
-    st.markdown("#### 🔍 個別股票分析")
-    
-    for result in results:
-        if 'error' not in result:
-            ticker = result['ticker']
-            overall_score = result.get('overall_score', 0)
-            recommendation = result.get('investment_recommendation', '無建議')
-            
-            # 根據評分設定顏色
-            if overall_score >= 70:
-                score_color = "🟢"
-            elif overall_score >= 50:
-                score_color = "🟡"
-            else:
-                score_color = "🔴"
-            
-            with st.expander(f"{score_color} {ticker} (評分: {overall_score})"):
-                # 使用與原有 AI 分析結果相同的顯示邏輯
-                display_single_stock_analysis(result)
-        else:
-            ticker = result.get('ticker', '未知代碼')
-            st.error(f"❌ {ticker}: {result.get('error', '未知錯誤')}")
 
 
 def display_single_stock_analysis(result):
