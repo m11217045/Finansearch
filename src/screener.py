@@ -493,27 +493,43 @@ class ValueScreener:
     
     def calculate_value_score(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        計算價值投資評分，評分越高表示越被低估
+        計算增強版價值投資評分，評分越高表示越被低估
         
-        評分標準：
-        1. 低本益比 (P/E Ratio) - 越低越好 (30%權重)
-        2. 低市淨率 (P/B Ratio) - 越低越好 (25%權重)  
-        3. 低債務權益比 (Debt to Equity) - 越低越好 (20%權重)
-        4. 高股東權益報酬率 (ROE) - 越高越好 (15%權重)
-        5. 高利潤率 (Profit Margins) - 越高越好 (10%權重)
+        增強版評分標準（11個指標，已移除本益比）：
+        估值指標 (25%):
+        1. 低市淨率 (P/B Ratio) - 越低越好 (12%權重)  
+        2. 低PEG比率 (PEG Ratio) - 越低越好 (8%權重)
+        3. 低企業價值/營收比 (EV/Revenue) - 越低越好 (5%權重)
+        
+        財務健全性 (30%):
+        4. 低債務權益比 (Debt to Equity) - 越低越好 (12%權重)
+        5. 高流動比率 (Current Ratio) - 越高越好 (8%權重)
+        6. 高自由現金流 (Free Cash Flow) - 越高越好 (10%權重)
+        
+        獲利能力 (25%):
+        7. 高股東權益報酬率 (ROE) - 越高越好 (12%權重)
+        8. 高營業利潤率 (Operating Margins) - 越高越好 (8%權重)
+        9. 高資產報酬率 (ROA) - 越高越好 (5%權重)
+        
+        成長性 (20%):
+        10. 高營收成長率 (Revenue Growth) - 越高越好 (10%權重)
+        11. 高盈餘成長率 (Earnings Growth) - 越高越好 (10%權重)
         """
-        logging.info("開始計算價值投資評分...")
+        logging.info("開始計算增強版價值投資評分...")
         
         # 建立評分用的數據副本
         scored_df = df.copy()
         
-        # 列名映射 - 處理不同的列名
+        # 擴展列名映射 - 處理不同的列名
         column_mapping = {
             'pe_ratio': 'trailing_pe',
             'pb_ratio': 'price_to_book', 
             'roe': 'return_on_equity',
+            'roa': 'return_on_assets',
             'symbol': 'ticker',
-            'name': 'company_name'
+            'name': 'company_name',
+            'ps_ratio': 'price_to_sales_trailing_12_months',
+            'profit_margin': 'profit_margins'
         }
         
         # 應用列名映射
@@ -521,15 +537,22 @@ class ValueScreener:
             if old_col in scored_df.columns and new_col not in scored_df.columns:
                 scored_df[new_col] = scored_df[old_col]
         
-        # 確保必要的數值列存在且為數值型
-        required_columns = ['trailing_pe', 'price_to_book', 'debt_to_equity', 'return_on_equity', 'profit_margins']
+        # 增強版必要的數值列
+        required_columns = [
+            'trailing_pe', 'price_to_book', 'peg_ratio', 'enterprise_to_revenue',
+            'debt_to_equity', 'current_ratio', 'free_cash_flow',
+            'return_on_equity', 'operating_margins', 'return_on_assets',
+            'revenue_growth', 'earnings_growth'
+        ]
         
-        # 備用列名
+        # 擴展備用列名
         alternative_columns = {
             'trailing_pe': 'pe_ratio',
             'price_to_book': 'pb_ratio',
             'return_on_equity': 'roe',
-            'profit_margins': 'profit_margin'
+            'return_on_assets': 'roa',
+            'profit_margins': 'profit_margin',
+            'enterprise_to_revenue': 'enterprise_value_to_revenue'
         }
         
         for col in required_columns:
@@ -548,13 +571,16 @@ class ValueScreener:
         if 'company_name' not in scored_df.columns and 'name' in scored_df.columns:
             scored_df['company_name'] = scored_df['name']
         
-        # 初始化評分
-        scored_df['value_score'] = 0.0
-        scored_df['pe_score'] = 0.0
-        scored_df['pb_score'] = 0.0
-        scored_df['debt_score'] = 0.0
-        scored_df['roe_score'] = 0.0
-        scored_df['margin_score'] = 0.0
+        # 初始化所有評分欄位（移除本益比）
+        score_columns = [
+            'value_score', 'pb_score', 'peg_score', 'ev_revenue_score',
+            'debt_score', 'current_ratio_score', 'fcf_score',
+            'roe_score', 'operating_margin_score', 'roa_score',
+            'revenue_growth_score', 'earnings_growth_score'
+        ]
+        
+        for score_col in score_columns:
+            scored_df[score_col] = 0.0
         
         # 過濾有效數據 - 放寬條件，只要有基本市值信息即可
         valid_stocks = scored_df[
@@ -566,36 +592,31 @@ class ValueScreener:
             logging.warning("沒有有效的股票數據進行評分，將對所有股票給予基礎評分")
             valid_stocks = scored_df.copy()
         
-        logging.info(f"對 {len(valid_stocks)} 支股票進行價值評分")
+        logging.info(f"對 {len(valid_stocks)} 支股票進行增強版價值評分")
         
-        # 評分權重 - 總和為100
+        # 增強版評分權重 - 總和為100，完全移除本益比指標
         weights = {
-            'pe': 30,
-            'pb': 25, 
-            'debt': 20,
-            'roe': 15,
-            'margin': 10
+            # 估值指標 (25%)
+            'pb': 12,           # 市淨率
+            'peg': 8,           # PEG比率  
+            'ev_revenue': 5,    # 企業價值/營收比
+            
+            # 財務健全性 (30%)
+            'debt': 12,         # 債務權益比
+            'current_ratio': 8, # 流動比率
+            'fcf': 10,          # 自由現金流
+            
+            # 獲利能力 (25%)
+            'roe': 12,          # 股東權益報酬率
+            'operating_margin': 8, # 營業利潤率
+            'roa': 5,           # 資產報酬率
+            
+            # 成長性 (20%) - 加入原本益比的權重
+            'revenue_growth': 10, # 營收成長率
+            'earnings_growth': 10 # 盈餘成長率
         }
         
-        # 1. 本益比評分 (權重: 30%)
-        pe_col = 'trailing_pe'
-        pe_valid = valid_stocks[
-            (valid_stocks[pe_col].notna()) & 
-            (valid_stocks[pe_col] > 0) & 
-            (valid_stocks[pe_col] < 100)
-        ]
-        
-        if len(pe_valid) > 1:
-            # 使用反向百分位排名 (越低的PE排名越高)
-            pe_percentile = pe_valid[pe_col].rank(pct=True, ascending=False)
-            valid_stocks.loc[pe_valid.index, 'pe_score'] = pe_percentile * weights['pe']
-            logging.info(f"為 {len(pe_valid)} 支股票計算本益比評分")
-        else:
-            # 如果數據不足，給所有股票平均分
-            valid_stocks['pe_score'] = weights['pe'] * 0.5
-            logging.info("本益比數據不足，給予平均評分")
-        
-        # 2. 市淨率評分 (權重: 25%)
+        # 1. 市淨率評分 (權重: 12%)
         pb_col = 'price_to_book'
         pb_valid = valid_stocks[
             (valid_stocks[pb_col].notna()) & 
@@ -611,7 +632,39 @@ class ValueScreener:
             valid_stocks['pb_score'] = weights['pb'] * 0.5
             logging.info("市淨率數據不足，給予平均評分")
         
-        # 3. 債務權益比評分 (權重: 20%)
+        # 2. PEG比率評分 (權重: 8%)
+        peg_col = 'peg_ratio'
+        peg_valid = valid_stocks[
+            (valid_stocks[peg_col].notna()) & 
+            (valid_stocks[peg_col] > 0) & 
+            (valid_stocks[peg_col] < 5)
+        ]
+        
+        if len(peg_valid) > 1:
+            peg_percentile = peg_valid[peg_col].rank(pct=True, ascending=False)
+            valid_stocks.loc[peg_valid.index, 'peg_score'] = peg_percentile * weights['peg']
+            logging.info(f"為 {len(peg_valid)} 支股票計算PEG比率評分")
+        else:
+            valid_stocks['peg_score'] = weights['peg'] * 0.5
+            logging.info("PEG比率數據不足，給予平均評分")
+        
+        # 3. 企業價值/營收比評分 (權重: 5%)
+        ev_revenue_col = 'enterprise_to_revenue'
+        ev_revenue_valid = valid_stocks[
+            (valid_stocks[ev_revenue_col].notna()) & 
+            (valid_stocks[ev_revenue_col] > 0) & 
+            (valid_stocks[ev_revenue_col] < 50)
+        ]
+        
+        if len(ev_revenue_valid) > 1:
+            ev_revenue_percentile = ev_revenue_valid[ev_revenue_col].rank(pct=True, ascending=False)
+            valid_stocks.loc[ev_revenue_valid.index, 'ev_revenue_score'] = ev_revenue_percentile * weights['ev_revenue']
+            logging.info(f"為 {len(ev_revenue_valid)} 支股票計算企業價值/營收比評分")
+        else:
+            valid_stocks['ev_revenue_score'] = weights['ev_revenue'] * 0.5
+            logging.info("企業價值/營收比數據不足，給予平均評分")
+        
+        # 4. 債務權益比評分 (權重: 12%)
         debt_col = 'debt_to_equity'
         debt_valid = valid_stocks[
             (valid_stocks[debt_col].notna()) & 
@@ -627,7 +680,45 @@ class ValueScreener:
             valid_stocks['debt_score'] = weights['debt'] * 0.5
             logging.info("債務權益比數據不足，給予平均評分")
         
-        # 4. 股東權益報酬率評分 (權重: 15%)
+        # 6. 流動比率評分 (權重: 8%)
+        current_ratio_col = 'current_ratio'
+        current_ratio_valid = valid_stocks[
+            (valid_stocks[current_ratio_col].notna()) & 
+            (valid_stocks[current_ratio_col] > 0) &
+            (valid_stocks[current_ratio_col] < 10)
+        ]
+        
+        if len(current_ratio_valid) > 1:
+            current_ratio_percentile = current_ratio_valid[current_ratio_col].rank(pct=True, ascending=True)
+            valid_stocks.loc[current_ratio_valid.index, 'current_ratio_score'] = current_ratio_percentile * weights['current_ratio']
+            logging.info(f"為 {len(current_ratio_valid)} 支股票計算流動比率評分")
+        else:
+            valid_stocks['current_ratio_score'] = weights['current_ratio'] * 0.5
+            logging.info("流動比率數據不足，給予平均評分")
+        
+        # 7. 自由現金流評分 (權重: 10%)
+        fcf_col = 'free_cash_flow'
+        # 將自由現金流轉換為相對於市值的比例
+        if fcf_col in valid_stocks.columns and 'market_cap' in valid_stocks.columns:
+            valid_stocks['fcf_to_market_cap'] = valid_stocks[fcf_col] / valid_stocks['market_cap']
+            fcf_valid = valid_stocks[
+                (valid_stocks['fcf_to_market_cap'].notna()) & 
+                (valid_stocks['fcf_to_market_cap'] > -1) &
+                (valid_stocks['fcf_to_market_cap'] < 1)
+            ]
+            
+            if len(fcf_valid) > 1:
+                fcf_percentile = fcf_valid['fcf_to_market_cap'].rank(pct=True, ascending=True)
+                valid_stocks.loc[fcf_valid.index, 'fcf_score'] = fcf_percentile * weights['fcf']
+                logging.info(f"為 {len(fcf_valid)} 支股票計算自由現金流評分")
+            else:
+                valid_stocks['fcf_score'] = weights['fcf'] * 0.5
+                logging.info("自由現金流數據不足，給予平均評分")
+        else:
+            valid_stocks['fcf_score'] = weights['fcf'] * 0.5
+            logging.info("自由現金流或市值數據不足，給予平均評分")
+        
+        # 8. 股東權益報酬率評分 (權重: 12%)
         roe_col = 'return_on_equity'
         roe_valid = valid_stocks[
             (valid_stocks[roe_col].notna()) & 
@@ -636,44 +727,103 @@ class ValueScreener:
         ]
         
         if len(roe_valid) > 1:
-            roe_percentile = roe_valid[roe_col].rank(pct=True, ascending=True)  # 越高越好
+            roe_percentile = roe_valid[roe_col].rank(pct=True, ascending=True)
             valid_stocks.loc[roe_valid.index, 'roe_score'] = roe_percentile * weights['roe']
             logging.info(f"為 {len(roe_valid)} 支股票計算ROE評分")
         else:
             valid_stocks['roe_score'] = weights['roe'] * 0.5
             logging.info("ROE數據不足，給予平均評分")
         
-        # 5. 利潤率評分 (權重: 10%)
-        margin_col = 'profit_margins'
-        margin_valid = valid_stocks[
-            (valid_stocks[margin_col].notna()) & 
-            (valid_stocks[margin_col] > -1) &
-            (valid_stocks[margin_col] < 1)
+        # 9. 營業利潤率評分 (權重: 8%)
+        operating_margin_col = 'operating_margins'
+        operating_margin_valid = valid_stocks[
+            (valid_stocks[operating_margin_col].notna()) & 
+            (valid_stocks[operating_margin_col] > -1) &
+            (valid_stocks[operating_margin_col] < 1)
         ]
         
-        if len(margin_valid) > 1:
-            margin_percentile = margin_valid[margin_col].rank(pct=True, ascending=True)  # 越高越好
-            valid_stocks.loc[margin_valid.index, 'margin_score'] = margin_percentile * weights['margin']
-            logging.info(f"為 {len(margin_valid)} 支股票計算利潤率評分")
+        if len(operating_margin_valid) > 1:
+            operating_margin_percentile = operating_margin_valid[operating_margin_col].rank(pct=True, ascending=True)
+            valid_stocks.loc[operating_margin_valid.index, 'operating_margin_score'] = operating_margin_percentile * weights['operating_margin']
+            logging.info(f"為 {len(operating_margin_valid)} 支股票計算營業利潤率評分")
         else:
-            valid_stocks['margin_score'] = weights['margin'] * 0.5
-            logging.info("利潤率數據不足，給予平均評分")
+            valid_stocks['operating_margin_score'] = weights['operating_margin'] * 0.5
+            logging.info("營業利潤率數據不足，給予平均評分")
         
-        # 計算總評分
+        # 10. 資產報酬率評分 (權重: 5%)
+        roa_col = 'return_on_assets'
+        roa_valid = valid_stocks[
+            (valid_stocks[roa_col].notna()) & 
+            (valid_stocks[roa_col] > -1) &
+            (valid_stocks[roa_col] < 1)
+        ]
+        
+        if len(roa_valid) > 1:
+            roa_percentile = roa_valid[roa_col].rank(pct=True, ascending=True)
+            valid_stocks.loc[roa_valid.index, 'roa_score'] = roa_percentile * weights['roa']
+            logging.info(f"為 {len(roa_valid)} 支股票計算ROA評分")
+        else:
+            valid_stocks['roa_score'] = weights['roa'] * 0.5
+            logging.info("ROA數據不足，給予平均評分")
+        
+        # 11. 營收成長率評分 (權重: 5%)
+        revenue_growth_col = 'revenue_growth'
+        revenue_growth_valid = valid_stocks[
+            (valid_stocks[revenue_growth_col].notna()) & 
+            (valid_stocks[revenue_growth_col] > -1) &
+            (valid_stocks[revenue_growth_col] < 5)
+        ]
+        
+        if len(revenue_growth_valid) > 1:
+            revenue_growth_percentile = revenue_growth_valid[revenue_growth_col].rank(pct=True, ascending=True)
+            valid_stocks.loc[revenue_growth_valid.index, 'revenue_growth_score'] = revenue_growth_percentile * weights['revenue_growth']
+            logging.info(f"為 {len(revenue_growth_valid)} 支股票計算營收成長率評分")
+        else:
+            valid_stocks['revenue_growth_score'] = weights['revenue_growth'] * 0.5
+            logging.info("營收成長率數據不足，給予平均評分")
+        
+        # 12. 盈餘成長率評分 (權重: 5%)
+        earnings_growth_col = 'earnings_growth'
+        earnings_growth_valid = valid_stocks[
+            (valid_stocks[earnings_growth_col].notna()) & 
+            (valid_stocks[earnings_growth_col] > -1) &
+            (valid_stocks[earnings_growth_col] < 5)
+        ]
+        
+        if len(earnings_growth_valid) > 1:
+            earnings_growth_percentile = earnings_growth_valid[earnings_growth_col].rank(pct=True, ascending=True)
+            valid_stocks.loc[earnings_growth_valid.index, 'earnings_growth_score'] = earnings_growth_percentile * weights['earnings_growth']
+            logging.info(f"為 {len(earnings_growth_valid)} 支股票計算盈餘成長率評分")
+        else:
+            valid_stocks['earnings_growth_score'] = weights['earnings_growth'] * 0.5
+            logging.info("盈餘成長率數據不足，給予平均評分")
+        
+        # 計算增強版總評分（移除本益比）
         valid_stocks['value_score'] = (
-            valid_stocks['pe_score'] + 
             valid_stocks['pb_score'] + 
+            valid_stocks['peg_score'] +
+            valid_stocks['ev_revenue_score'] +
             valid_stocks['debt_score'] + 
+            valid_stocks['current_ratio_score'] +
+            valid_stocks['fcf_score'] +
             valid_stocks['roe_score'] + 
-            valid_stocks['margin_score']
+            valid_stocks['operating_margin_score'] +
+            valid_stocks['roa_score'] +
+            valid_stocks['revenue_growth_score'] +
+            valid_stocks['earnings_growth_score']
         )
         
-        # 將評分結果合併回原DataFrame
-        scored_df.loc[valid_stocks.index, ['value_score', 'pe_score', 'pb_score', 
-                                          'debt_score', 'roe_score', 'margin_score']] = valid_stocks[['value_score', 'pe_score', 'pb_score', 
-                                                                          'debt_score', 'roe_score', 'margin_score']]
+        # 將評分結果合併回原DataFrame（移除本益比評分）
+        all_score_columns = [
+            'value_score', 'pb_score', 'peg_score', 'ev_revenue_score',
+            'debt_score', 'current_ratio_score', 'fcf_score',
+            'roe_score', 'operating_margin_score', 'roa_score',
+            'revenue_growth_score', 'earnings_growth_score'
+        ]
         
-        logging.info(f"完成 {len(valid_stocks)} 支股票的價值評分")
+        scored_df.loc[valid_stocks.index, all_score_columns] = valid_stocks[all_score_columns]
+        
+        logging.info(f"完成 {len(valid_stocks)} 支股票的增強版價值評分")
         return scored_df
     
     def get_top_undervalued_stocks(self, df: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:

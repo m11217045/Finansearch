@@ -245,29 +245,62 @@ class MultiMarketDataFetcher:
                 'industry': info.get('industry', '未分類'),
                 'market_cap': info.get('marketCap'),
                 'current_price': info.get('regularMarketPrice'),
+                
+                # 價值指標
                 'pe_ratio': info.get('trailingPE'),
+                'trailing_pe': info.get('trailingPE'),
                 'forward_pe': info.get('forwardPE'),
                 'pb_ratio': info.get('priceToBook'),
+                'price_to_book': info.get('priceToBook'),
                 'ps_ratio': info.get('priceToSalesTrailing12Months'),
+                'price_to_sales_trailing_12_months': info.get('priceToSalesTrailing12Months'),
                 'peg_ratio': info.get('pegRatio'),
+                'enterprise_to_revenue': info.get('enterpriseToRevenue'),
+                'enterprise_to_ebitda': info.get('enterpriseToEbitda'),
+                
+                # 財務健全性指標
                 'debt_to_equity': info.get('debtToEquity'),
                 'current_ratio': info.get('currentRatio'),
+                'quick_ratio': info.get('quickRatio'),
+                'free_cash_flow': info.get('freeCashflow'),
+                'operating_cash_flow': info.get('operatingCashflow'),
+                'total_cash_per_share': info.get('totalCashPerShare'),
+                
+                # 獲利能力指標
                 'roe': info.get('returnOnEquity'),
+                'return_on_equity': info.get('returnOnEquity'),
                 'roa': info.get('returnOnAssets'),
+                'return_on_assets': info.get('returnOnAssets'),
                 'profit_margin': info.get('profitMargins'),
+                'profit_margins': info.get('profitMargins'),
+                'operating_margins': info.get('operatingMargins'),
+                'gross_margins': info.get('grossMargins'),
+                'ebitda_margins': info.get('ebitdaMargins'),
+                
+                # 成長指標
                 'revenue_growth': info.get('revenueGrowth'),
                 'earnings_growth': info.get('earningsGrowth'),
+                'earnings_quarterly_growth': info.get('earningsQuarterlyGrowth'),
+                
+                # 股息指標
                 'dividend_yield': info.get('dividendYield'),
                 'dividend_rate': info.get('dividendRate'),
                 'payout_ratio': info.get('payoutRatio'),
+                
+                # 風險和市場指標
                 'beta': info.get('beta'),
+                'short_ratio': info.get('shortRatio'),
                 'fifty_two_week_high': info.get('fiftyTwoWeekHigh'),
                 'fifty_two_week_low': info.get('fiftyTwoWeekLow'),
                 'recommendation': info.get('recommendationKey'),
                 'target_price': info.get('targetMeanPrice'),
+                
+                # 其他財務指標
                 'enterprise_value': info.get('enterpriseValue'),
                 'ebitda': info.get('ebitda'),
-                'free_cash_flow': info.get('freeCashflow')
+                'book_value': info.get('bookValue'),
+                'revenue_per_share': info.get('revenuePerShare'),
+                'total_revenue': info.get('totalRevenue')
             }
             
             return clean_financial_data(stock_data)

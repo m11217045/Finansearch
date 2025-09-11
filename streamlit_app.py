@@ -1977,7 +1977,7 @@ def display_screening_results():
     
     st.markdown("### 🏆 被低估股票排名前10名")
     
-    # 準備顯示用的資料 - 使用新的欄位名稱
+    # 準備顯示用的資料 - 使用增強版欄位
     available_columns = df.columns.tolist()
     display_columns = []
     
@@ -1991,25 +1991,54 @@ def display_screening_results():
     if 'sector' in available_columns:
         display_columns.append('sector')
     
-    # 財務指標欄位
+    # 核心評分
+    if 'value_score' in available_columns:
+        display_columns.append('value_score')
+    
+    # 估值指標
     if 'trailing_pe' in available_columns:
         display_columns.append('trailing_pe')
     if 'price_to_book' in available_columns:
         display_columns.append('price_to_book')
+    if 'peg_ratio' in available_columns:
+        display_columns.append('peg_ratio')
+    
+    # 財務健全性指標
     if 'debt_to_equity' in available_columns:
         display_columns.append('debt_to_equity')
-    if 'value_score' in available_columns:
-        display_columns.append('value_score')
+    if 'current_ratio' in available_columns:
+        display_columns.append('current_ratio')
+    
+    # 獲利能力指標
+    if 'return_on_equity' in available_columns:
+        display_columns.append('return_on_equity')
+    if 'operating_margins' in available_columns:
+        display_columns.append('operating_margins')
+    
+    # 成長指標
+    if 'revenue_growth' in available_columns:
+        display_columns.append('revenue_growth')
+    if 'earnings_growth' in available_columns:
+        display_columns.append('earnings_growth')
     
     display_df = df[display_columns].copy()
     
     # 格式化數值
-    if 'trailing_pe' in display_df.columns:
-        display_df['trailing_pe'] = display_df['trailing_pe'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-    if 'price_to_book' in display_df.columns:
-        display_df['price_to_book'] = display_df['price_to_book'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-    if 'debt_to_equity' in display_df.columns:
-        display_df['debt_to_equity'] = display_df['debt_to_equity'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+    numeric_columns = [
+        'trailing_pe', 'price_to_book', 'peg_ratio', 'debt_to_equity', 
+        'current_ratio', 'return_on_equity', 'operating_margins',
+        'revenue_growth', 'earnings_growth'
+    ]
+    
+    for col in numeric_columns:
+        if col in display_df.columns:
+            if col in ['return_on_equity', 'operating_margins', 'revenue_growth', 'earnings_growth']:
+                # 百分比格式
+                display_df[col] = display_df[col].apply(lambda x: f"{x*100:.1f}%" if pd.notna(x) else "N/A")
+            else:
+                # 小數格式
+                display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+    
     if 'value_score' in display_df.columns:
         display_df['value_score'] = display_df['value_score'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
     
@@ -2025,16 +2054,22 @@ def display_screening_results():
         
         display_df['評等'] = df['value_score'].apply(get_rating)
     
-    # 重新命名欄位
+    # 增強版欄位重新命名
     column_mapping = {
         'value_rank': '排名',
         'ticker': '代碼', 
         'company_name': '公司名稱',
         'sector': '行業',
+        'value_score': '綜合評分',
         'trailing_pe': '本益比',
         'price_to_book': '市淨率',
+        'peg_ratio': 'PEG比率',
         'debt_to_equity': '債務權益比',
-        'value_score': '評分'
+        'current_ratio': '流動比率',
+        'return_on_equity': 'ROE',
+        'operating_margins': '營業利潤率',
+        'revenue_growth': '營收成長',
+        'earnings_growth': '盈餘成長'
     }
     
     # 只重命名存在的欄位
@@ -2048,6 +2083,35 @@ def display_screening_results():
     display_df.columns = new_column_names
     
     st.dataframe(display_df, use_container_width=True)
+    
+    # 顯示評分說明
+    with st.expander("📊 增強版評分系統說明"):
+        st.markdown("""
+        **新版評分系統包含11個指標，權重分配如下（已移除本益比）：**
+        
+        **🏷️ 估值指標 (25%)**
+        - 市淨率 (12%) - 越低越好  
+        - PEG比率 (8%) - 越低越好
+        - 企業價值/營收比 (5%) - 越低越好
+        
+        **💰 財務健全性 (30%)**
+        - 債務權益比 (12%) - 越低越好
+        - 流動比率 (8%) - 越高越好
+        - 自由現金流 (10%) - 越高越好
+        
+        **📈 獲利能力 (25%)**
+        - 股東權益報酬率/ROE (12%) - 越高越好
+        - 營業利潤率 (8%) - 越高越好
+        - 資產報酬率/ROA (5%) - 越高越好
+        
+        **🚀 成長性 (20%)**
+        - 營收成長率 (10%) - 越高越好
+        - 盈餘成長率 (10%) - 越高越好
+        
+        **評分範圍：** 0-100分，分數越高表示投資價值越高
+        
+        **註：** 已移除本益比指標，將其權重分配給成長性指標，更重視公司的成長潛力
+        """)
 
 
 def create_visualization_charts(df):
@@ -2553,7 +2617,7 @@ def individual_stock_analysis_interface():
         st.markdown("""
         ### 個股綜合分析包含三大維度：
         
-        **🗞️ 新聞面分析 (權重 50%)**
+        **🗞️ 新聞面分析 (權重 40%)**
         - 收集最新30篇相關新聞
         - 進行情感分析和關鍵詞提取
         - 評估市場情緒和投資者關注度
@@ -2564,7 +2628,7 @@ def individual_stock_analysis_interface():
         - 移動平均線趨勢分析
         - 成交量分析
         
-        **💰 籌碼面分析 (權重 20%)**
+        **💰 籌碼面分析 (權重 30%)**
         - 機構持股比例
         - 內部人持股情況
         - 空頭比率分析
@@ -2609,26 +2673,13 @@ def display_individual_analysis_results(analysis_result, symbol):
     with col1:
         news_score = analysis_result.get('news_score', 0)
         st.metric(
-            label="🗞️ 新聞面評分 (50%)",
+            label="🗞️ 新聞面評分 (40%)",
             value=f"{news_score:.1f}/100",
             delta=None
         )
     
     with col2:
         tech_score = analysis_result.get('technical_score', 0)
-        st.metric(
-            label="📈 技術面評分 (25%)",
-            value=f"{tech_score:.1f}/100",
-            delta=None
-        )
-    
-    with col3:
-        chip_score = analysis_result.get('chip_score', 0)
-        st.metric(
-            label="💰 基本面評分 (25%)",
-            value=f"{chip_score:.1f}/100",
-            delta=None
-        )
         st.metric(
             label="📈 技術面評分 (30%)",
             value=f"{tech_score:.1f}/100",
@@ -2638,7 +2689,7 @@ def display_individual_analysis_results(analysis_result, symbol):
     with col3:
         chip_score = analysis_result.get('chip_score', 0)
         st.metric(
-            label="💰 籌碼面評分 (20%)",
+            label="💰 籌碼面評分 (30%)",
             value=f"{chip_score:.1f}/100",
             delta=None
         )
@@ -2698,7 +2749,7 @@ def display_overview_tab(analysis_result, symbol):
 
 def display_news_analysis_tab(analysis_result):
     """顯示新聞分析標籤 - 專注短線投資機會"""
-    st.subheader("🗞️ 短線新聞情感分析 (權重: 50%) - 專注一週内投資機會")
+    st.subheader("🗞️ 短線新聞情感分析 (權重: 40%) - 專注一週内投資機會")
     
     # 添加短線投資說明
     st.info("📈 **短線投資重點**: 本分析專注於一週內的新聞，特別關注24小時內的最新消息對股價的即時影響。")

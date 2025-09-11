@@ -826,9 +826,9 @@ class StockIndividualAnalyzer:
         計算綜合評分
         
         權重分配：
-        - 新聞面: 50%
+        - 新聞面: 40%
         - 技術面: 30%
-        - 籌碼面: 20%
+        - 籌碼面: 30%
         """
         news_score = analysis_result.get('news_sentiment_score', 50)
         news_impact = analysis_result.get('news_impact_score', 50)
@@ -840,9 +840,9 @@ class StockIndividualAnalyzer:
         
         # 加權平均
         comprehensive_score = (
-            news_comprehensive * 0.5 +
+            news_comprehensive * 0.4 +
             technical_score * 0.3 +
-            chip_score * 0.2
+            chip_score * 0.3
         )
         
         return round(comprehensive_score, 1)
