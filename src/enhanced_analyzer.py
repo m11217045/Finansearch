@@ -8,6 +8,7 @@ import logging
 import time
 import json
 import requests
+import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import yfinance as yf
@@ -1680,6 +1681,7 @@ class EnhancedStockAnalyzer:
             if initial_rec != final_rec or abs(initial_conf - final_conf) > 1:
                 md_content.append("#### 🔄 立場變化")
                 
+
                 if initial_rec != final_rec:
                     md_content.append(f"• 建議從 **{initial_rec}** 改為 **{final_rec}**")
                 
@@ -1810,7 +1812,7 @@ class ValueInvestmentAgent:
             }
     
     def _create_analysis_prompt(self, stock_data: Dict, context: str, round_type: str) -> str:
-        """創建分析提示詞"""
+        """創建分析提示詞 - 簡化版本，從檔案載入分析師特定內容"""
         base_prompt = f"""
 你是一位專業的{self.role}，專精於{self.expertise}，投資風格為{self.investment_style}。
 
@@ -1835,326 +1837,17 @@ class ValueInvestmentAgent:
 {context}
 """
         
-        # 根據不同分析師添加專業分析框架
-        if "芒格" in self.name:
-            base_prompt += f"""
-
-【多學科心智模型分析框架】
-請運用以下心智模型和學科知識進行分析：
-
-1. 心理學偏誤檢測：
-   - 確認偏誤：市場是否過度樂觀或悲觀？
-   - 錨定效應：當前估值是否受歷史高點影響？
-   - 從眾心理：投資者情緒是否影響合理定價？
-   - 損失厭惡：市場是否過度反應負面消息？
-
-2. 統計思維應用：
-   - 基準比較：與同業、指數的統計差異
-   - 迴歸平均：異常表現的持續性分析
-   - 樣本偏誤：財務數據的代表性檢驗
-   - 機率分佈：風險報酬的期望值計算
-
-3. 經濟學原理：
-   - 供需法則：產業供需平衡分析
-   - 邊際效用：成長投資的邊際報酬遞減
-   - 機會成本：相對於其他投資選項的吸引力
-   - 網路效應：平台型企業的競爭優勢
-
-4. 系統思維：
-   - 反饋循環：商業模式的自我強化機制
-   - 複雜適應：企業對環境變化的適應能力
-   - 槓桿點：小變化可能帶來大影響的關鍵因素
-   - 系統韌性：面對衝擊的恢復能力
-
-5. 跨學科整合：
-   - 物理學：慣性定律在企業發展中的體現
-   - 生物學：企業生態系統和競爭演化
-   - 化學：催化劑效應在商業中的應用
-   - 數學：複利效應和指數成長模式
-"""
-        elif "巴菲特" in self.name:
-            base_prompt += f"""
-
-【巴菲特價值投資分析框架】
-請運用經典價值投資原則進行深度分析：
-
-1. 護城河評估（Economic Moats）：
-   - 品牌價值：是否具有強勢品牌和客戶忠誠度？
-   - 成本優勢：是否擁有低成本生產或營運優勢？
-   - 網路效應：用戶增加是否提升產品價值？
-   - 轉換成本：客戶更換供應商的難度和成本？
-   - 法規壁壘：是否受到法規保護形成進入障礙？
-
-2. 管理層品質評估：
-   - 資本配置能力：管理層如何運用股東資金？
-   - 誠信度：是否有透明的溝通和可信的承諾？
-   - 股東導向：決策是否以股東利益為優先？
-   - 長期思維：是否專注長期價值而非短期業績？
-
-3. 財務品質分析：
-   - 盈餘品質：現金流與帳面盈餘的一致性
-   - 資本報酬：ROE、ROIC的持續性和穩定性
-   - 債務結構：負債水準和償債能力評估
-   - 自由現金流：持續產生現金的能力
-
-4. 內在價值評估：
-   - DCF估值：未來現金流折現分析
-   - 相對估值：與歷史和同業的估值比較
-   - 安全邊際：市價與內在價值的差距
-   - 長期成長：可持續成長率評估
-
-5. 定性因素：
-   - 商業模式：是否簡單易懂且可預測？
-   - 競爭地位：在產業中的地位和影響力
-   - 客戶關係：與客戶的長期合作關係
-   - 創新能力：持續改進和適應市場變化的能力
-"""
-        elif "成長" in self.name:
-            base_prompt += f"""
-
-【成長價值投資分析框架】
-請聚焦於成長性與價值的平衡分析：
-
-1. 成長性評估：
-   - 營收成長：歷史成長趨勢和未來成長潛力
-   - 獲利成長：EPS成長的品質和可持續性
-   - 市場擴張：可觸及市場(TAM/SAM)的成長空間
-   - 產品創新：新產品對成長的貢獻度
-   - 市佔率：在成長市場中的競爭地位
-
-2. 估值合理性：
-   - PEG比率：成長率相對於本益比的合理性
-   - 前瞻估值：基於未來盈餘的估值吸引力
-   - 成長股溢價：相對於價值股的溢價是否合理
-   - 同業比較：與成長型同業的估值差異
-
-3. 成長驅動因子：
-   - 產業週期：所處產業的成長階段
-   - 技術趨勢：是否搭上重要技術浪潮
-   - 市場需求：核心產品的市場需求強度
-   - 營運槓桿：規模擴張對獲利的放大效應
-
-4. 成長品質分析：
-   - 有機成長：內生成長vs併購成長的比例
-   - 投資回報：成長投資的資本效率
-   - 現金轉換：成長是否伴隨現金流改善
-   - 競爭護城河：成長優勢的可持續性
-
-5. 風險評估：
-   - 成長風險：未達成長預期的機率和影響
-   - 估值風險：高估值在成長放緩時的下跌風險
-   - 競爭風險：新進者稀釋成長機會的可能性
-   - 週期風險：成長受景氣週期影響的程度
-"""
-        elif "市場時機" in self.name:
-            base_prompt += f"""
-
-【市場時機與技術分析框架】
-請結合總體環境與技術分析進行判斷：
-
-1. 市場週期定位：
-   - 經濟週期：當前經濟週期階段對股市的影響
-   - 市場情緒：VIX、投資者情緒指標分析
-   - 資金流向：機構法人和散戶資金動向
-   - 政策環境：貨幣政策和財政政策影響
-
-2. 技術面分析：
-   - 價格趨勢：主要趨勢方向和強度
-   - 支撐阻力：關鍵價格水準和突破機率
-   - 技術指標：RSI、MACD、布林帶等信號
-   - 成交量：價量關係和成交量確認
-
-3. 相對強度分析：
-   - 板塊輪動：所屬板塊的相對表現
-   - 指數比較：相對於大盤的強弱表現
-   - 同業比較：在同業中的技術面地位
-   - 風格偏好：成長vs價值、大型vs小型股偏好
-
-4. 時機判斷要素：
-   - 進場時機：最佳買進時點的技術信號
-   - 出場策略：停損和停利點位設定
-   - 持有期間：基於技術面的預期持有時間
-   - 風險報酬：技術面風險與報酬比例
-
-5. 總體經濟因子：
-   - 利率環境：利率變化對估值的影響
-   - 通膨預期：通膨對企業成本和定價的影響
-   - 匯率影響：美元強弱對國際企業的影響
-   - 商品價格：原物料價格對成本結構的影響
-"""
-        elif "風險管理" in self.name:
-            base_prompt += f"""
-
-【風險管理與投資組合分析框架】
-請從風險控制和資產配置角度進行評估：
-
-1. 風險識別與量化：
-   - 系統性風險：市場、利率、匯率等系統風險
-   - 非系統性風險：公司特有風險和產業風險
-   - 流動性風險：日均成交量和市場深度分析
-   - 信用風險：財務結構和債務償還能力
-   - 營運風險：商業模式和管理風險
-
-2. 風險測量指標：
-   - Beta係數：相對於市場的敏感度
-   - 波動率：歷史價格波動程度
-   - VaR分析：在給定信心水準下的最大損失
-   - 下檔風險：負報酬的機率和幅度
-   - 最大回撤：歷史最大損失幅度
-
-3. 投資組合適配性：
-   - 相關性：與現有持股的相關程度
-   - 分散效果：對投資組合風險的分散貢獻
-   - 部位建議：建議配置比重和部位大小
-   - 再平衡需求：是否需要調整其他持股
-
-4. 風險調整報酬：
-   - 夏普比率：單位風險的超額報酬
-   - Treynor比率：單位系統風險的超額報酬
-   - 資訊比率：相對於基準的風險調整報酬
-   - 卡瑪比率：相對於最大回撤的報酬比
-
-5. 風險管控建議：
-   - 停損策略：建議停損點位和觸發條件
-   - 部位管理：分批建倉和減倉策略
-   - 對沖方案：可用的風險對沖工具
-   - 監控指標：需要持續關注的風險指標
-"""
+        # 從檔案載入分析師特定的提示詞
+        agent_specific_prompt = self._load_agent_prompt_from_file(self.name, round_type)
         
-        if round_type == "initial":
-            if "芒格" in self.name:
-                task_prompt = f"""
-請從多學科心智模型的角度進行深度分析，特別關注：
+        if agent_specific_prompt:
+            return base_prompt + "\n" + agent_specific_prompt
+        else:
+            # 如果載入失敗，使用通用提示詞
+            logging.warning(f"無法載入 {self.name} 的提示詞，使用通用提示詞")
+            return base_prompt + f"""
 
-1. 心理偏誤識別（150字）：市場對該股票是否存在認知偏誤？
-2. 統計異常檢測（100字）：財務指標是否存在統計異常？
-3. 經濟護城河評估（100字）：運用經濟學原理分析競爭優勢
-4. 系統性風險評估（100字）：從系統思維角度識別潛在風險
-5. 跨學科洞察（50字）：其他學科能提供什麼獨特視角？
-
-請以 JSON 格式回應：
-{{
-    "analysis": "整合多學科分析的詳細內容",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "key_points": ["心理偏誤發現", "統計異常", "經濟護城河", "系統風險", "跨學科洞察"],
-    "cognitive_biases_detected": ["偏誤類型1", "偏誤類型2"],
-    "statistical_anomalies": ["異常指標1", "異常指標2"],
-    "economic_moats": ["護城河類型1", "護城河類型2"],
-    "systemic_risks": ["系統風險1", "系統風險2"],
-    "mental_models_applied": ["模型1", "模型2", "模型3"]
-}}
-"""
-            elif "巴菲特" in self.name:
-                task_prompt = f"""
-請從巴菲特價值投資哲學角度進行深度分析：
-
-1. 護城河分析（150字）：評估企業的競爭優勢和可持續性
-2. 管理層品質（100字）：評估管理層的資本配置能力和誠信度
-3. 財務品質（100字）：分析盈餘品質和現金流生成能力
-4. 內在價值（100字）：估算合理價值並評估安全邊際
-5. 長期前景（50字）：10年後企業的競爭地位預測
-
-請以 JSON 格式回應：
-{{
-    "analysis": "巴菲特風格的價值投資分析",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "key_points": ["護城河優勢", "管理層品質", "財務健全性", "估值吸引力", "長期前景"],
-    "economic_moats": ["品牌價值", "成本優勢", "網路效應"],
-    "management_quality": ["資本配置", "股東導向", "透明度"],
-    "financial_strength": ["現金流穩定", "低負債", "高ROE"],
-    "valuation_metrics": ["DCF估值", "相對估值", "安全邊際"],
-    "competitive_position": ["市場地位", "定價能力", "客戶黏性"]
-}}
-"""
-            elif "成長" in self.name:
-                task_prompt = f"""
-請從成長價值投資角度進行分析：
-
-1. 成長性評估（150字）：分析營收和獲利成長的可持續性
-2. 估值合理性（100字）：評估成長股溢價是否合理
-3. 成長驅動因子（100字）：識別核心成長動能和催化劑
-4. 成長品質（100字）：評估成長的品質和投資回報效率
-5. 風險評估（50字）：成長預期不達標的風險
-
-請以 JSON 格式回應：
-{{
-    "analysis": "成長價值投資深度分析",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "key_points": ["成長動能", "估值合理性", "競爭優勢", "執行能力", "風險控制"],
-    "growth_drivers": ["市場擴張", "產品創新", "營運槓桿"],
-    "growth_quality": ["有機成長", "現金轉換", "投資回報"],
-    "valuation_metrics": ["PEG比率", "前瞻估值", "同業比較"],
-    "competitive_advantages": ["技術領先", "市場地位", "品牌價值"],
-    "risk_factors": ["成長放緩", "估值修正", "競爭加劇"]
-}}
-"""
-            elif "市場時機" in self.name:
-                task_prompt = f"""
-請從市場時機和技術分析角度評估：
-
-1. 市場週期定位（150字）：當前市場環境和投資者情緒分析
-2. 技術面分析（100字）：價格趨勢、支撐阻力和技術指標
-3. 相對強度（100字）：相對於大盤和同業的表現比較
-4. 時機判斷（100字）：最佳進出場時機和策略建議
-5. 總體因子（50字）：利率、通膨等總體因素影響
-
-請以 JSON 格式回應：
-{{
-    "analysis": "市場時機與技術面綜合分析",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "key_points": ["趨勢方向", "進場時機", "風險報酬", "技術信號", "總體環境"],
-    "market_cycle": ["經濟階段", "市場情緒", "資金流向"],
-    "technical_signals": ["趨勢確認", "突破信號", "動能指標"],
-    "relative_strength": ["相對大盤", "板塊表現", "同業比較"],
-    "timing_strategy": ["進場點位", "停損設定", "獲利目標"],
-    "macro_factors": ["利率環境", "政策影響", "匯率因素"]
-}}
-"""
-            elif "風險管理" in self.name:
-                task_prompt = f"""
-請從風險管理和投資組合角度評估：
-
-1. 風險識別（150字）：系統性和非系統性風險的全面評估
-2. 風險量化（100字）：使用Beta、波動率、VaR等指標量化風險
-3. 投資組合適配（100字）：對整體投資組合的影響和分散效果
-4. 風險調整報酬（100字）：夏普比率等風險調整績效指標
-5. 風險管控（50字）：停損策略和部位管理建議
-
-請以 JSON 格式回應：
-{{
-    "analysis": "風險管理與投資組合分析",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "key_points": ["風險水準", "分散效果", "風險報酬", "流動性", "管控策略"],
-    "risk_factors": ["系統風險", "公司風險", "流動性風險"],
-    "risk_metrics": ["Beta係數", "波動率", "最大回撤"],
-    "portfolio_impact": ["相關性", "分散效果", "配置比重"],
-    "risk_adjusted_returns": ["夏普比率", "Treynor比率", "資訊比率"],
-    "risk_management": ["停損策略", "部位控制", "對沖方案"]
-}}
-"""
-            else:
-                task_prompt = f"""
-請從{self.investment_style}的角度進行首次分析，提供：
+請從{self.investment_style}的角度進行{'首次' if round_type == 'initial' else '進一步'}分析：
 
 1. 詳細分析（200-300字）
 2. 投資建議：BUY/HOLD/SELL
@@ -2162,170 +1855,7 @@ class ValueInvestmentAgent:
 4. 目標價格區間（如適用）
 5. 風險等級：LOW/MEDIUM/HIGH
 6. 主要論點（3-5點）
-
-請以 JSON 格式回應：
-{{
-    "analysis": "詳細分析內容",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "key_points": ["論點1", "論點2", "論點3"]
-}}
 """
-        else:
-            if "芒格" in self.name:
-                task_prompt = f"""
-基於其他專家的分析，請從多學科角度重新評估：
-
-1. 偏誤糾正：其他專家的分析中存在哪些認知偏誤？
-2. 統計質疑：對其他專家的數據解讀提出統計學質疑
-3. 經濟邏輯檢驗：從經濟學原理檢驗其他觀點的合理性
-4. 系統性思考：從更高維度重新審視投資邏輯
-5. 心智模型應用：運用不同心智模型得出的結論
-
-請以 JSON 格式回應：
-{{
-    "analysis": "多學科辯論分析內容",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "rebuttal_points": ["對專家A的統計質疑", "對專家B的心理偏誤指出"],
-    "support_points": ["支持專家C的經濟邏輯", "認同專家D的系統分析"],
-    "bias_corrections": ["糾正的偏誤1", "糾正的偏誤2"],
-    "statistical_challenges": ["統計挑戰1", "統計挑戰2"],
-    "economic_logic_tests": ["邏輯檢驗1", "邏輯檢驗2"],
-    "mental_models_applied": ["反向思維", "機率思維", "系統思維"]
-}}
-"""
-            elif "巴菲特" in self.name:
-                task_prompt = f"""
-基於其他專家的分析，請從價值投資大師角度重新評估：
-
-1. 長期價值質疑：其他專家是否過分關注短期波動？
-2. 護城河挑戰：對其他專家的競爭優勢分析提出質疑
-3. 管理層評估：從治理角度評估其他專家忽略的風險
-4. 簡單性原則：複雜的投資邏輯是否違反簡單性原則？
-5. 安全邊際：重新評估風險和安全邊際的adequacy
-
-請以 JSON 格式回應：
-{{
-    "analysis": "巴菲特風格的辯論分析",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "rebuttal_points": ["短期思維批評", "護城河質疑"],
-    "support_points": ["認同的長期價值", "支持的競爭優勢"],
-    "long_term_perspective": ["10年後展望", "持續競爭力"],
-    "simplicity_test": ["商業模式簡單性", "可預測性"],
-    "margin_of_safety": ["價值低估程度", "風險緩衝"]
-}}
-"""
-            elif "成長" in self.name:
-                task_prompt = f"""
-基於其他專家的分析，請從成長投資角度重新評估：
-
-1. 成長潛力重估：其他專家是否低估了成長機會？
-2. 創新質疑：對傳統價值分析忽略創新價值的反駁
-3. 估值辯護：為成長股溢價提供合理辯護
-4. 趨勢把握：指出其他專家未注意到的成長趨勢
-5. 時間價值：強調時間複利對成長股的重要性
-
-請以 JSON 格式回應：
-{{
-    "analysis": "成長投資角度的辯論分析",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "rebuttal_points": ["成長被低估", "創新價值被忽視"],
-    "support_points": ["認同的成長邏輯", "支持的估值觀點"],
-    "growth_potential": ["未來成長空間", "新市場機會"],
-    "innovation_value": ["技術突破價值", "商業模式創新"],
-    "time_value": ["複利效應", "先發優勢價值"]
-}}
-"""
-            elif "市場時機" in self.name:
-                task_prompt = f"""
-基於其他專家的分析，請從市場時機角度重新評估：
-
-1. 時機挑戰：其他專家是否忽略了市場時機的重要性？
-2. 技術面反駁：用技術分析挑戰基本面結論
-3. 情緒修正：指出市場情緒對估值的影響
-4. 週期性觀點：從市場週期角度重新審視
-5. 流動性影響：評估市場流動性對價格的影響
-
-請以 JSON 格式回應：
-{{
-    "analysis": "市場時機分析師的辯論觀點",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "rebuttal_points": ["時機被忽視", "技術面否定基本面"],
-    "support_points": ["認同的趨勢分析", "支持的週期判斷"],
-    "timing_analysis": ["進場時機評估", "市場週期定位"],
-    "technical_divergence": ["價量背離", "指標反轉信號"],
-    "market_sentiment": ["情緒極端", "反向指標"]
-}}
-"""
-            elif "風險管理" in self.name:
-                task_prompt = f"""
-基於其他專家的分析，請從風險管理角度重新評估：
-
-1. 風險盲點：指出其他專家忽略的潛在風險
-2. 風險量化質疑：對其他專家的風險評估提出數據挑戰
-3. 組合影響：從投資組合角度評估個股風險
-4. 極端情境：考慮極端市場情況下的風險暴露
-5. 風險報酬失衡：挑戰風險與報酬的不對稱性
-
-請以 JSON 格式回應：
-{{
-    "analysis": "風險管理專家的辯論分析",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "rebuttal_points": ["風險被低估", "報酬預期過高"],
-    "support_points": ["認同的風險控制", "支持的謹慎態度"],
-    "hidden_risks": ["未識別風險", "相關性風險"],
-    "risk_quantification": ["VaR重估", "壓力測試"],
-    "portfolio_impact": ["集中度風險", "相關性影響"],
-    "extreme_scenarios": ["黑天鵝事件", "系統性崩潰"]
-}}
-"""
-            else:
-                task_prompt = f"""
-基於其他專家的分析，請重新評估並提供辯論觀點：
-
-1. 針對其他專家意見的反駁或支持
-2. 補強或修正你的原始觀點
-3. 更新後的投資建議和理由
-4. 對爭議點的明確立場
-
-請以 JSON 格式回應：
-{{
-    "analysis": "辯論分析內容",
-    "recommendation": "BUY/HOLD/SELL",
-    "confidence": 7,
-    "target_price_low": 150.0,
-    "target_price_high": 180.0,
-    "risk_level": "MEDIUM",
-    "rebuttal_points": ["反駁點1", "反駁點2"],
-    "support_points": ["支持點1", "支持點2"]
-}}
-"""
-        
-        return base_prompt + task_prompt
-    
     def _parse_analysis_result(self, analysis_text: str) -> Dict[str, Any]:
         """解析 AI 分析結果"""
         try:
@@ -2337,72 +1867,15 @@ class ValueInvestmentAgent:
                 json_str = analysis_text[start_idx:end_idx]
                 result = json.loads(json_str)
                 
-                # 確保必要欄位存在
+                # 確保必要欄位存在，但不要強制固定信心度
                 if 'analysis' not in result:
                     result['analysis'] = analysis_text
                 if 'recommendation' not in result:
                     result['recommendation'] = 'HOLD'
                 if 'confidence' not in result:
-                    result['confidence'] = 5
+                    result['confidence'] = 5  # 預設值，但允許AI動態調整
                 if 'risk_level' not in result:
                     result['risk_level'] = 'MEDIUM'
-                
-                # 對於不同分析師，保留特殊的專業分析字段
-                if "芒格" in self.name:
-                    # 芒格多學科分析字段
-                    munger_fields = [
-                        'cognitive_biases_detected', 'statistical_anomalies', 'economic_moats',
-                        'systemic_risks', 'mental_models_applied', 'bias_corrections',
-                        'statistical_challenges', 'economic_logic_tests'
-                    ]
-                    for field in munger_fields:
-                        if field not in result:
-                            result[field] = []
-                
-                elif "巴菲特" in self.name:
-                    # 巴菲特價值投資分析字段
-                    buffett_fields = [
-                        'economic_moats', 'management_quality', 'financial_strength',
-                        'valuation_metrics', 'competitive_position', 'long_term_perspective',
-                        'simplicity_test', 'margin_of_safety'
-                    ]
-                    for field in buffett_fields:
-                        if field not in result:
-                            result[field] = []
-                
-                elif "成長" in self.name:
-                    # 成長價值投資分析字段
-                    growth_fields = [
-                        'growth_drivers', 'growth_quality', 'valuation_metrics',
-                        'competitive_advantages', 'risk_factors', 'growth_potential',
-                        'innovation_value', 'time_value'
-                    ]
-                    for field in growth_fields:
-                        if field not in result:
-                            result[field] = []
-                
-                elif "市場時機" in self.name:
-                    # 市場時機分析字段
-                    timing_fields = [
-                        'market_cycle', 'technical_signals', 'relative_strength',
-                        'timing_strategy', 'macro_factors', 'timing_analysis',
-                        'technical_divergence', 'market_sentiment'
-                    ]
-                    for field in timing_fields:
-                        if field not in result:
-                            result[field] = []
-                
-                elif "風險管理" in self.name:
-                    # 風險管理分析字段
-                    risk_fields = [
-                        'risk_factors', 'risk_metrics', 'portfolio_impact',
-                        'risk_adjusted_returns', 'risk_management', 'hidden_risks',
-                        'risk_quantification', 'extreme_scenarios'
-                    ]
-                    for field in risk_fields:
-                        if field not in result:
-                            result[field] = []
-                
                 return result
             else:
                 # 如果無法解析 JSON，則手動提取關鍵資訊
@@ -2415,13 +1888,37 @@ class ValueInvestmentAgent:
         """從文本中提取關鍵資訊"""
         text_upper = text.upper()
         
-        # 提取投資建議
-        if 'BUY' in text_upper or '買入' in text:
-            recommendation = 'BUY'
-        elif 'SELL' in text_upper or '賣出' in text:
-            recommendation = 'SELL'
-        else:
-            recommendation = 'HOLD'
+        # 提取投資建議 - 優先從明確標記提取
+        recommendation = 'HOLD'
+        
+        # 優先檢查結構化標記
+        suggestion_patterns = [
+            r'投資建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)',
+            r'建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)',
+            r'我的投資建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)',
+            r'最終建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)'
+        ]
+        
+        for pattern in suggestion_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                suggestion = match.group(1).upper()
+                if suggestion in ['BUY', '買入']:
+                    recommendation = 'BUY'
+                elif suggestion in ['SELL', '賣出']:
+                    recommendation = 'SELL'
+                elif suggestion in ['HOLD', '持有']:
+                    recommendation = 'HOLD'
+                break
+        
+        # 如果沒有找到結構化標記，則在整個文本中搜索（向後兼容）
+        if recommendation == 'HOLD':
+            if 'BUY' in text_upper or '買入' in text:
+                recommendation = 'BUY'
+            elif 'SELL' in text_upper or '賣出' in text:
+                recommendation = 'SELL'
+            else:
+                recommendation = 'HOLD'
         
         # 提取風險等級
         if 'HIGH' in text_upper or '高風險' in text:
@@ -2431,26 +1928,178 @@ class ValueInvestmentAgent:
         else:
             risk_level = 'MEDIUM'
         
+        # 提取信心度
+        confidence = 5  # 預設值
+        confidence_patterns = [
+            r'信心程度?[：:]\s*(\d+)/?\d*',
+            r'信心[：:]\s*(\d+)/?\d*',
+            r'信心度[：:]\s*(\d+)/?\d*',
+            r'confidence[：:]\s*(\d+)/?\d*'
+        ]
+        
+        for pattern in confidence_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    confidence = int(match.group(1))
+                    # 確保信心度在1-10範圍內
+                    confidence = max(1, min(10, confidence))
+                    break
+                except ValueError:
+                    continue
+        
         return {
             'analysis': text,
             'recommendation': recommendation,
-            'confidence': 5,
+            'confidence': confidence,
             'target_price_low': None,
             'target_price_high': None,
             'risk_level': risk_level,
             'key_points': []
         }
+    
+    def _build_agent_file_mapping(self) -> Dict[str, str]:
+        """動態建立分析師名稱到檔案名稱的映射"""
+        import os
+        import glob
+        
+        # 建構 agent 資料夾路徑
+        agent_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent")
+        
+        agent_file_map = {}
+        
+        try:
+            # 掃描 agent 資料夾中的所有 .txt 檔案（排除 README）
+            txt_files = glob.glob(os.path.join(agent_dir, "*.txt"))
+            txt_files = [f for f in txt_files if not os.path.basename(f).startswith("README")]
+            
+            for file_path in txt_files:
+                file_name = os.path.basename(file_path)
+                # 直接使用檔案名稱（去掉 .txt）作為分析師名稱
+                agent_name = file_name.replace('.txt', '')
+                agent_file_map[agent_name] = file_name
+            
+            logging.info(f"動態偵測到 {len(agent_file_map)} 個分析師檔案")
+            
+        except Exception as e:
+            logging.error(f"動態偵測分析師檔案時發生錯誤: {e}")
+            # 如果動態偵測失敗，返回預設映射
+            agent_file_map = {
+                "buffett_value_investor": "buffett_value_investor.txt",
+                "munger_multidisciplinary_analyst": "munger_multidisciplinary_analyst.txt",
+                "growth_value_investor": "growth_value_investor.txt",
+                "market_timing_analyst": "market_timing_analyst.txt",
+                "risk_management_expert": "risk_management_expert.txt",
+                "esg_sustainability_expert": "esg_sustainability_expert.txt",
+                "quantitative_investment_analyst": "quantitative_investment_analyst.txt",
+                "technology_industry_expert": "technology_industry_expert.txt",
+                "macroeconomic_analyst": "macroeconomic_analyst.txt",
+                "behavioral_finance_expert": "behavioral_finance_expert.txt"
+            }
+        
+        return agent_file_map
+    
+    def _convert_filename_to_agent_name(self, filename: str) -> str:
+        """將檔案名稱轉換為分析師名稱（適用於新檔案）"""
+        # 這個方法可以根據檔案名稱的命名規則來轉換
+        # 目前先返回空字符串，如果需要支援新檔案可以在這裡實現邏輯
+        filename_mappings = {
+            # 未來可以在這裡添加新的檔案名稱映射規則
+            # 例如: "new_analyst_type": "新分析師類型"
+        }
+        
+        return filename_mappings.get(filename, "")
+
+    def _load_agent_prompt_from_file(self, agent_name: str, round_type: str = "initial") -> str:
+        """從 txt 檔案載入分析師提示詞"""
+        import os
+        
+        # 動態建立分析師名稱到檔案名稱的映射
+        agent_file_map = self._build_agent_file_mapping()
+        
+        # 獲取對應的檔案名稱
+        file_name = agent_file_map.get(agent_name, "")
+        if not file_name:
+            logging.warning(f"找不到 {agent_name} 對應的提示詞檔案")
+            return ""
+        
+        # 建構檔案路徑
+        agent_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent")
+        file_path = os.path.join(agent_dir, file_name)
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 根據 round_type 提取對應的提示詞部分
+            if round_type == "initial":
+                # 提取初始分析任務部分
+                start_marker = "## 初始分析任務"
+                end_marker = "## 辯論分析任務"
+            else:
+                # 提取辯論分析任務部分
+                start_marker = "## 辯論分析任務"
+                end_marker = "## 輸出格式"
+            
+            start_idx = content.find(start_marker)
+            if start_idx == -1:
+                logging.warning(f"在 {file_name} 中找不到 {start_marker}")
+                return ""
+            
+            # 找到結束標記或檔案結尾
+            end_idx = content.find(end_marker, start_idx)
+            if end_idx == -1:
+                end_idx = len(content)
+            
+            # 提取分析框架和任務內容
+            framework_start = content.find("## 分析框架")
+            if framework_start != -1:
+                framework_end = content.find("## 初始分析任務", framework_start)
+                if framework_end == -1:
+                    framework_end = start_idx
+                framework_content = content[framework_start:framework_end].strip()
+            else:
+                framework_content = ""
+            
+            task_content = content[start_idx:end_idx].strip()
+            
+            return framework_content + "\n\n" + task_content
+            
+        except FileNotFoundError:
+            logging.error(f"找不到提示詞檔案: {file_path}")
+            return ""
+        except Exception as e:
+            logging.error(f"載入提示詞檔案時發生錯誤: {e}")
+            return ""
 
 
 # 新增多代理人辯論功能到增強分析器
 class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
     """增強版股票分析器 - 包含多代理人辯論功能"""
     
-    def __init__(self, enable_debate: bool = None, status_manager=None):
+    def __init__(self, enable_debate: bool = None, selected_agents: List[str] = None):
         super().__init__()
         
-        # 設置狀態管理器
-        self.status_manager = status_manager
+        # 設置選擇的分析師
+        if selected_agents is None or len(selected_agents) == 0:
+            # 動態獲取可用的分析師作為預設選擇
+            try:
+                from streamlit_app import get_available_agents
+                available_agents = get_available_agents()
+                # 預設選擇前5位分析師
+                self.selected_agents = available_agents[:5] if len(available_agents) >= 5 else available_agents
+            except Exception as e:
+                logging.warning(f"無法動態獲取分析師列表，使用預設列表: {e}")
+                # 回退到預設的英文名稱
+                self.selected_agents = [
+                    "buffett_value_investor",
+                    "munger_multidisciplinary_analyst", 
+                    "growth_value_investor",
+                    "market_timing_analyst",
+                    "risk_management_expert"
+                ]
+        else:
+            self.selected_agents = selected_agents
         
         # 判斷是否啟用多代理人辯論
         if enable_debate is None:
@@ -2461,7 +2110,7 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         if self.enable_debate:
             try:
                 self.agents = self._initialize_agents()
-                logging.info("多代理人辯論系統初始化成功")
+                logging.info(f"多代理人辯論系統初始化成功，共 {len(self.agents)} 位分析師")
             except Exception as e:
                 logging.error(f"多代理人辯論系統初始化失敗: {e}")
                 self.agents = []
@@ -2470,53 +2119,113 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
             self.agents = []
     
     def _initialize_agents(self) -> List[ValueInvestmentAgent]:
-        """初始化代理人團隊"""
-        agents = [
-            ValueInvestmentAgent(
-                name="巴菲特派價值投資師",
-                role="長期價值投資分析師",
-                expertise="基本面分析、護城河評估、長期價值挖掘",
-                investment_style="長期持有、尋找具有競爭優勢的優質企業"
-            ),
-            ValueInvestmentAgent(
-                name="芒格多學科分析師",
-                role="多學科心智模型分析師", 
-                expertise="心理學偏誤識別、統計思維、經濟學原理、多元心智模型應用",
-                investment_style="運用跨領域知識，識別市場非理性，追求複利效應"
-            ),
-            ValueInvestmentAgent(
-                name="成長價值投資師",
-                role="成長價值投資分析師",
-                expertise="成長性評估、未來盈利預測、估值模型",
-                investment_style="尋找被低估的成長股、關注未來潛力"
-            ),
-            ValueInvestmentAgent(
-                name="市場時機分析師",
-                role="市場週期分析師",
-                expertise="市場時機判斷、技術面分析、資金流向",
-                investment_style="關注市場週期、適時進出場"
-            ),
-            ValueInvestmentAgent(
-                name="風險管理專家",
-                role="投資風險評估師",
-                expertise="風險識別、投組管理、資產配置",
-                investment_style="嚴格風控、分散投資、資產保護"
-            )
-        ]
-        return agents
+        """初始化代理人團隊 - 動態從agent資料夾讀取"""
+        import os
+        import glob
+        
+        # 建構 agent 資料夾路徑
+        agent_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent")
+        
+        # 建立檔案名稱到分析師屬性的映射
+        agent_properties = {
+            "buffett_value_investor": {
+                "role": "長期價值投資分析師",
+                "expertise": "基本面分析、護城河評估、長期價值挖掘",
+                "investment_style": "長期持有、尋找具有競爭優勢的優質企業"
+            },
+            "munger_multidisciplinary_analyst": {
+                "role": "多學科心智模型分析師",
+                "expertise": "心理學偏誤識別、統計思維、經濟學原理、多元心智模型應用",
+                "investment_style": "運用跨領域知識，識別市場非理性，追求複利效應"
+            },
+            "growth_value_investor": {
+                "role": "成長價值投資分析師",
+                "expertise": "成長性評估、未來盈利預測、估值模型",
+                "investment_style": "尋找被低估的成長股、關注未來潛力"
+            },
+            "market_timing_analyst": {
+                "role": "市場週期分析師",
+                "expertise": "市場時機判斷、技術面分析、資金流向",
+                "investment_style": "關注市場週期、適時進出場"
+            },
+            "risk_management_expert": {
+                "role": "投資風險評估師",
+                "expertise": "風險識別、投組管理、資產配置",
+                "investment_style": "嚴格風控、分散投資、資產保護"
+            },
+            "esg_sustainability_expert": {
+                "role": "永續投資分析師",
+                "expertise": "ESG評估、社會責任投資、環境影響分析",
+                "investment_style": "關注企業社會責任與永續發展"
+            },
+            "quantitative_investment_analyst": {
+                "role": "量化模型分析師",
+                "expertise": "統計模型、因子分析、量化策略",
+                "investment_style": "數據驅動的投資決策"
+            },
+            "technology_industry_expert": {
+                "role": "科技行業分析師",
+                "expertise": "科技趨勢、創新評估、行業分析",
+                "investment_style": "關注科技創新與行業變革"
+            },
+            "macroeconomic_analyst": {
+                "role": "宏觀經濟分析師",
+                "expertise": "經濟指標分析、政策影響、市場預測",
+                "investment_style": "從宏觀角度把握投資機會"
+            },
+            "behavioral_finance_expert": {
+                "role": "行為金融分析師",
+                "expertise": "投資者心理、市場情緒、行為偏差",
+                "investment_style": "識別市場非理性行為"
+            }
+        }
+        
+        selected_agent_objects = []
+        
+        try:
+            # 掃描 agent 資料夾中的所有 .txt 檔案（排除 README）
+            txt_files = glob.glob(os.path.join(agent_dir, "*.txt"))
+            txt_files = [f for f in txt_files if not os.path.basename(f).startswith("README")]
+            
+            for file_path in txt_files:
+                file_name = os.path.basename(file_path)
+                agent_name = file_name.replace('.txt', '')
+                
+                # 檢查用戶是否選擇了這個分析師
+                if agent_name in self.selected_agents:
+                    # 獲取分析師屬性
+                    properties = agent_properties.get(agent_name, {
+                        "role": f"{agent_name.replace('_', ' ').title()} 分析師",
+                        "expertise": "專業投資分析",
+                        "investment_style": "價值投資"
+                    })
+                    
+                    try:
+                        agent = ValueInvestmentAgent(
+                            name=agent_name,
+                            role=properties["role"],
+                            expertise=properties["expertise"],
+                            investment_style=properties["investment_style"]
+                        )
+                        selected_agent_objects.append(agent)
+                        logging.info(f"✅ 成功初始化分析師: {agent_name}")
+                    except Exception as e:
+                        logging.error(f"❌ 初始化分析師 {agent_name} 失敗: {e}")
+                else:
+                    logging.debug(f"⏭️ 跳過未選擇的分析師: {agent_name}")
+            
+            logging.info(f"總共初始化了 {len(selected_agent_objects)} 位分析師")
+            
+        except Exception as e:
+            logging.error(f"初始化代理人團隊時發生錯誤: {e}")
+            # 如果動態初始化失敗，返回空的列表
+            selected_agent_objects = []
+        
+        return selected_agent_objects
     
     def _analyze_agent_concurrent(self, agent, stock_data, context, round_type, agent_index, total_agents, stock_symbol):
         """並發執行單個 Agent 分析的輔助方法"""
         try:
-            # 更新當前分析的專家（線程安全）
-            if self.status_manager:
-                self.status_manager.update_status(
-                    agent=self._map_agent_to_key(agent.name),
-                    step=f'專家分析 ({agent_index+1}/{total_agents})',
-                    message=f'{agent.name} 正在分析 {stock_symbol}...',
-                    progress=55 + (agent_index * 5)
-                )
-            
             # 執行分析
             analysis_result = agent.analyze(stock_data, context, round_type)
             
@@ -2541,6 +2250,7 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
     def _analyze_agents_concurrently(self, stock_data, context="", round_type="initial", max_workers=None):
         """並發執行多個 Agent 分析"""
         if not self.agents:
+            logging.warning(f"無可用的代理人進行分析，代理人列表為空")
             return {}
         
         # 檢查是否啟用並發模式
@@ -2556,6 +2266,8 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         results = {}
         
         logging.info(f"使用並發模式分析，最大執行緒數: {max_workers}")
+        logging.info(f"實際可用代理人數量: {len(self.agents)}")
+        logging.info(f"代理人列表: {[agent.name for agent in self.agents]}")
         
         # 使用 ThreadPoolExecutor 進行並發分析
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -2567,6 +2279,8 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                     i, len(self.agents), stock_symbol
                 ): agent for i, agent in enumerate(self.agents)
             }
+            
+            logging.info(f"已提交 {len(future_to_agent)} 個分析任務")
             
             # 收集結果
             completed_count = 0
@@ -2592,6 +2306,7 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                         'error': str(e)
                     }
         
+        logging.info(f"並發分析完成，成功處理 {len(results)} 個代理人的結果")
         return results
     
     def _analyze_agents_sequentially(self, stock_data, context="", round_type="initial"):
@@ -2606,15 +2321,6 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         
         for i, agent in enumerate(self.agents):
             try:
-                # 更新當前分析的專家
-                if self.status_manager:
-                    self.status_manager.update_status(
-                        agent=self._map_agent_to_key(agent.name),
-                        step=f'專家分析 ({i+1}/{len(self.agents)})',
-                        message=f'{agent.name} 正在分析 {stock_symbol}...',
-                        progress=55 + (i * 5)
-                    )
-                
                 analysis_result = agent.analyze(stock_data, context, round_type)
                 results[agent.name] = analysis_result
                 
@@ -2635,29 +2341,9 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         
         return results
     
-    def _map_agent_to_key(self, agent_name: str) -> str:
-        """將代理人名稱映射到狀態管理器的鍵值"""
-        agent_mapping = {
-            '巴菲特派價值投資師': 'fundamentals_analyst',
-            '芒格多學科分析師': 'munger_analyst',
-            '成長價值投資師': 'bull_researcher',
-            '市場時機分析師': 'market_analyst',
-            '風險管理專家': 'risk_manager'
-        }
-        return agent_mapping.get(agent_name, 'research_manager')
-    
     def analyze_stock_comprehensive(self, stock_data: Dict, include_debate: bool = None) -> Dict[str, Any]:
         """執行股票的綜合分析，包含多代理人辯論（如果啟用）"""
         stock_symbol = stock_data.get('symbol', 'Unknown')
-        
-        # 更新狀態：開始綜合分析
-        if self.status_manager:
-            self.status_manager.update_status(
-                agent='market_analyst',
-                step='綜合分析',
-                message=f'正在為 {stock_symbol} 執行綜合分析...',
-                progress=10
-            )
         
         # 先執行原有的綜合分析
         base_analysis = super().analyze_stock_comprehensive(stock_data)
@@ -2669,15 +2355,6 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         if include_debate and self.enable_debate and 'error' not in base_analysis:
             try:
                 logging.info(f"開始對 {stock_data.get('symbol')} 進行多代理人辯論分析")
-                
-                # 更新狀態：開始多代理人辯論
-                if self.status_manager:
-                    self.status_manager.update_status(
-                        agent='research_manager',
-                        step='多代理人辯論',
-                        message=f'正在召集專家團隊分析 {stock_symbol}...',
-                        progress=50
-                    )
                 
                 debate_result = self.conduct_multi_agent_debate(stock_data)
                 
@@ -2700,13 +2377,6 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                     logging.warning(f"無法為 {stock_symbol} 生成專家分析過程MD報告: {md_error}")
                 
                 # 更新狀態：完成分析
-                if self.status_manager:
-                    self.status_manager.update_status(
-                        agent='research_manager',
-                        step='整合結果',
-                        message=f'{stock_symbol} 的綜合分析已完成',
-                        progress=90
-                    )
                 
             except Exception as e:
                 logging.error(f"多代理人辯論分析失敗: {e}")
@@ -2721,6 +2391,10 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         
         stock_symbol = stock_data.get('symbol', 'Unknown')
         
+        # 添加調試信息
+        logging.info(f"開始多代理人辯論分析，代理人數量: {len(self.agents)}")
+        logging.info(f"選擇的代理人: {self.selected_agents}")
+        
         debate_result = {
             'symbol': stock_data.get('symbol'),
             'company_name': stock_data.get('company_name'),
@@ -2734,14 +2408,6 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         
         # 第一輪：各代理人獨立分析（並發執行）
         logging.info("第一輪：各代理人獨立分析（並發模式）")
-        
-        if self.status_manager:
-            self.status_manager.update_status(
-                agent='research_manager',
-                step='專家獨立分析',
-                message=f'各領域專家正在並發分析 {stock_symbol}...',
-                progress=55
-            )
         
         # 使用並發分析方法
         start_time = time.time()
@@ -2824,7 +2490,7 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                 
             except Exception as e:
                 logging.error(f"處理 {agent_name} 分析結果失敗: {e}")
-                # 即使失敗也要有基本結構
+                # 即使失敗也要有基本構造
                 debate_result['agents_analysis'][agent_name] = {
                     'initial_recommendation': 'HOLD',
                     'initial_confidence': 0,
@@ -2845,14 +2511,6 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         
         for round_num in range(1, rounds + 1):
             logging.info(f"第{round_num + 1}輪：辯論與反駁")
-            
-            if self.status_manager:
-                self.status_manager.update_status(
-                    agent='research_manager',
-                    step=f'辯論輪次 {round_num}',
-                    message=f'專家團隊正在進行第 {round_num} 輪辯論...',
-                    progress=70 + (round_num * 5)
-                )
             
             round_result = self._conduct_debate_round(stock_data, context, round_num)
             debate_result['debate_rounds'].append(round_result)
@@ -2918,14 +2576,6 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                         agent_data['position_change_reason'] = change_analysis
         
         # 統計投票結果
-        if self.status_manager:
-            self.status_manager.update_status(
-                agent='research_manager',
-                step='統計投票結果',
-                message=f'正在統計專家投票結果...',
-                progress=85
-            )
-        
         debate_result['voting_results'] = self._calculate_voting_results(
             debate_result['agents_analysis'], debate_result['debate_rounds']
         )
@@ -2966,13 +2616,14 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
 === 第{round_num}輪辯論要求 ===
 基於上述各專家的分析意見，請重新評估你的觀點並提供辯論回應：
 
-1. 指出其他專家分析中你認為有問題或值得商榷的地方
-2. 補強你原本分析中的論點
-3. 基於討論調整你的投資建議（如果需要）
-4. 提供具體的數據和邏輯支持你的觀點
-5. 對主要爭議點表達明確立場
+1. 仔細檢視其他專家的分析，特別是與你不同觀點的論點
+2. 指出其他專家分析中你認為有問題或值得商榷的地方
+3. 補強你原本分析中的論點，但也要考慮其他專家的質疑
+4. 基於新的證據和邏輯推理，決定是否調整你的投資建議
+5. 提供具體的數據和邏輯支持你的觀點
+6. 對主要爭議點表達明確立場，並解釋你的推理過程
 
-請保持專業理性，並基於價值投資原則進行分析。
+請保持專業理性，基於價值投資原則進行分析。如果有充分的理由，可以改變立場；如果原觀點仍然正確，應該堅守立場。
 """
         
         # 使用並發分析進行辯論輪次
@@ -3125,7 +2776,7 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         
         if debate_rounds:
             final_round = debate_rounds[-1]
-            for agent_name, response in final_round['agent_responses'].items():
+            for agent_name, response in final_round.get('agent_responses', {}).items():
                 if response.get('recommendation') == consensus_recommendation:
                     key_points = response.get('key_points', [])
                     supporting_points.extend(key_points)
