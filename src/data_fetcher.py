@@ -314,6 +314,59 @@ class MultiMarketDataFetcher:
                               info.get('shortName') or 
                               ticker)
                 
+                # 獲取歷史數據來計算高點和低點
+                try:
+                    # 獲取至少24週的歷史數據
+                    hist = stock.history(period="2y")  # 2年數據確保有足夠的數據
+                    
+                    if not hist.empty and len(hist) >= 5:  # 至少需要5個交易日
+                        # 計算不同時間段的高點和低點
+                        current_date = hist.index[-1]
+                        
+                        # 1週 (5個交易日)
+                        if len(hist) >= 5:
+                            week_1_data = hist.tail(5)
+                            one_week_high = week_1_data['High'].max()
+                            one_week_low = week_1_data['Low'].min()
+                        else:
+                            one_week_high = one_week_low = None
+                        
+                        # 4週 (20個交易日)
+                        if len(hist) >= 20:
+                            week_4_data = hist.tail(20)
+                            four_week_high = week_4_data['High'].max()
+                            four_week_low = week_4_data['Low'].min()
+                        else:
+                            four_week_high = four_week_low = None
+                        
+                        # 12週 (約60個交易日)
+                        if len(hist) >= 60:
+                            week_12_data = hist.tail(60)
+                            twelve_week_high = week_12_data['High'].max()
+                            twelve_week_low = week_12_data['Low'].min()
+                        else:
+                            twelve_week_high = twelve_week_low = None
+                        
+                        # 24週 (約120個交易日)
+                        if len(hist) >= 120:
+                            week_24_data = hist.tail(120)
+                            twenty_four_week_high = week_24_data['High'].max()
+                            twenty_four_week_low = week_24_data['Low'].min()
+                        else:
+                            twenty_four_week_high = twenty_four_week_low = None
+                    else:
+                        one_week_high = one_week_low = None
+                        four_week_high = four_week_low = None
+                        twelve_week_high = twelve_week_low = None
+                        twenty_four_week_high = twenty_four_week_low = None
+                        
+                except Exception as e:
+                    logging.warning(f"{ticker}: 無法獲取歷史數據來計算高點低點: {e}")
+                    one_week_high = one_week_low = None
+                    four_week_high = four_week_low = None
+                    twelve_week_high = twelve_week_low = None
+                    twenty_four_week_high = twenty_four_week_low = None
+                
                 stock_data = {
                     'symbol': ticker,
                     'ticker': ticker,  # 為了向後兼容
@@ -370,6 +423,17 @@ class MultiMarketDataFetcher:
                     'short_ratio': info.get('shortRatio'),
                     'fifty_two_week_high': info.get('fiftyTwoWeekHigh'),
                     'fifty_two_week_low': info.get('fiftyTwoWeekLow'),
+                    
+                    # 新增的時間段高點低點
+                    'one_week_high': one_week_high,
+                    'one_week_low': one_week_low,
+                    'four_week_high': four_week_high,
+                    'four_week_low': four_week_low,
+                    'twelve_week_high': twelve_week_high,
+                    'twelve_week_low': twelve_week_low,
+                    'twenty_four_week_high': twenty_four_week_high,
+                    'twenty_four_week_low': twenty_four_week_low,
+                    
                     'recommendation': info.get('recommendationKey'),
                     'target_price': info.get('targetMeanPrice'),
                     

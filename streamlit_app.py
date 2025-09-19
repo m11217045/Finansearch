@@ -17,7 +17,7 @@ from typing import List
 # 導入自訂模組
 from src.data_fetcher import SP500DataFetcher, MultiMarketDataFetcher, STOCK_PORTFOLIOS
 from src.screener import ValueScreener
-from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
+from src.enhanced_analyzer import EnhancedStockAnalyzer
 from src.stock_individual_analyzer import StockIndividualAnalyzer
 from src.utils import setup_logging, load_env_variables, format_currency, format_percentage, format_ratio, DateTimeEncoder
 from src.portfolio_db import PortfolioDatabase, portfolio_db, format_currency as format_portfolio_currency, get_currency_symbol
@@ -889,7 +889,7 @@ def analyze_selected_portfolio(tickers, enable_debate=True, save_results=True, s
         if selected_agents is None:
             selected_agents = ["巴菲特派價值投資師", "芒格多學科分析師", "成長價值投資師", "市場時機分析師", "風險管理專家"]
         
-        analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=enable_debate, selected_agents=selected_agents)
+        analyzer = EnhancedStockAnalyzer()
         
         results = {}
         
@@ -2360,10 +2360,7 @@ def run_ai_analysis():
         
         # 初始化數據獲取器和分析器
         fetcher = MultiMarketDataFetcher()
-        analyzer = EnhancedStockAnalyzerWithDebate(
-            enable_debate=enable_debate,
-            selected_agents=selected_agents
-        )
+        analyzer = EnhancedStockAnalyzer()
         
         results = {}
         

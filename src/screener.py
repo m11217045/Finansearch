@@ -8,7 +8,7 @@ import numpy as np
 import logging
 from typing import Dict, List, Tuple, Any
 from src.utils import format_currency, format_percentage, format_ratio, DateTimeEncoder
-from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
+from src.enhanced_analyzer import EnhancedStockAnalyzer
 from src.stock_individual_analyzer import StockIndividualAnalyzer
 
 
@@ -17,7 +17,7 @@ class ValueScreener:
     
     def __init__(self):
         pass
-        self.enhanced_analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=False)
+        self.enhanced_analyzer = EnhancedStockAnalyzer()
         self.individual_analyzer = StockIndividualAnalyzer()
     
     def enhanced_analysis(self, tickers: List[str], use_enhanced_metrics: bool = True) -> pd.DataFrame:
