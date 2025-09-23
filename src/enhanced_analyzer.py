@@ -1840,6 +1840,38 @@ class ValueInvestmentAgent:
         # 從檔案載入分析師特定的提示詞
         agent_specific_prompt = self._load_agent_prompt_from_file(self.name, round_type)
         
+        # 如果是信心度改善輪次，添加特別的提示
+        if round_type == "confidence_improvement":
+            confidence_improvement_prompt = f"""
+
+=== 🎯 信心度強化分析要求 ===
+
+⚠️ 重要提醒：你或其他分析師的信心度可能低於最低要求(5分)，請進行更深入的分析：
+
+📋 **強化分析清單**：
+1. 🔍 **數據驗證**：重新檢視所有關鍵財務指標的準確性和可靠性
+2. 📊 **同業比較**：與同行業其他公司進行詳細對比分析
+3. 🏢 **管理層評估**：深入分析管理團隊的能力和誠信度
+4. 📈 **成長前景**：仔細評估未來3-5年的成長潛力和可持續性
+5. ⚠️ **風險識別**：識別並量化所有重要風險因素
+6. 💰 **估值合理性**：使用多種估值方法交叉驗證
+7. 🌍 **宏觀環境**：考慮整體經濟和行業環境的影響
+8. 🔮 **情境分析**：考慮最好、最壞和最可能的情境
+
+📝 **回應要求**：
+- 信心度必須達到 5 分以上 (1-10 分制)
+- 如果信心度仍不足 5 分，請明確說明具體的不確定因素
+- 提供具體的數據和邏輯支撐你的分析結論
+- 說明你的關鍵假設和可能的風險點
+
+🎯 **目標**：提供更可靠、更有信心的投資建議
+"""
+            
+            if agent_specific_prompt:
+                return base_prompt + "\n" + agent_specific_prompt + confidence_improvement_prompt
+            else:
+                return base_prompt + confidence_improvement_prompt
+        
         if agent_specific_prompt:
             return base_prompt + "\n" + agent_specific_prompt
         else:
@@ -1891,50 +1923,108 @@ class ValueInvestmentAgent:
         # 提取投資建議 - 優先從明確標記提取
         recommendation = 'HOLD'
         
-        # 優先檢查結構化標記
+        # 優先檢查結構化標記（包括強烈建議的關鍵詞）
         suggestion_patterns = [
-            r'投資建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)',
-            r'建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)',
-            r'我的投資建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)',
-            r'最終建議[：:]\s*(BUY|SELL|HOLD|買入|賣出|持有)'
+            r'投資建議[：:]\s*(強烈.*?BUY|強烈.*?買入|強烈.*?SELL|強烈.*?賣出|BUY|SELL|HOLD|買入|賣出|持有)',
+            r'建議[：:]\s*(強烈.*?BUY|強烈.*?買入|強烈.*?SELL|強烈.*?賣出|BUY|SELL|HOLD|買入|賣出|持有)',
+            r'我的投資建議[：:]\s*(強烈.*?BUY|強烈.*?買入|強烈.*?SELL|強烈.*?賣出|BUY|SELL|HOLD|買入|賣出|持有)',
+            r'最終建議[：:]\s*(強烈.*?BUY|強烈.*?買入|強烈.*?SELL|強烈.*?賣出|BUY|SELL|HOLD|買入|賣出|持有)',
+            r'我維持並強化我的.*?(強烈.*?BUY|強烈.*?買入|強烈.*?SELL|強烈.*?賣出|BUY|SELL|HOLD|買入|賣出|持有)',
+            r'我(給出|提出|維持).*?(強烈.*?BUY|強烈.*?買入|強烈.*?SELL|強烈.*?賣出|BUY|SELL|HOLD|買入|賣出|持有)'
         ]
         
         for pattern in suggestion_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 suggestion = match.group(1).upper()
-                if suggestion in ['BUY', '買入']:
-                    recommendation = 'BUY'
-                elif suggestion in ['SELL', '賣出']:
+                if '強烈' in suggestion and ('SELL' in suggestion or '賣出' in suggestion):
                     recommendation = 'SELL'
-                elif suggestion in ['HOLD', '持有']:
+                elif '強烈' in suggestion and ('BUY' in suggestion or '買入' in suggestion):
+                    recommendation = 'BUY'
+                elif 'BUY' in suggestion or '買入' in suggestion:
+                    recommendation = 'BUY'
+                elif 'SELL' in suggestion or '賣出' in suggestion:
+                    recommendation = 'SELL'
+                elif 'HOLD' in suggestion or '持有' in suggestion:
                     recommendation = 'HOLD'
                 break
         
-        # 如果沒有找到結構化標記，則在整個文本中搜索（向後兼容）
+        # 如果沒有找到結構化標記，檢查強烈情感詞彙
         if recommendation == 'HOLD':
-            if 'BUY' in text_upper or '買入' in text:
-                recommendation = 'BUY'
-            elif 'SELL' in text_upper or '賣出' in text:
-                recommendation = 'SELL'
-            else:
-                recommendation = 'HOLD'
+            strong_sell_patterns = [
+                r'強烈.*?賣出',
+                r'強烈.*?SELL',
+                r'應立即.*?規避',
+                r'災難.*?級別',
+                r'極高.*?風險',
+                r'完全不符合.*?標準',
+                r'嚴重.*?警訊',
+                r'巨額.*?負',
+                r'極低.*?盈利'
+            ]
+            
+            strong_buy_patterns = [
+                r'強烈.*?買入',
+                r'強烈.*?BUY',
+                r'極力.*?推薦',
+                r'高度.*?看好'
+            ]
+            
+            # 檢查強烈賣出
+            for pattern in strong_sell_patterns:
+                if re.search(pattern, text, re.IGNORECASE):
+                    recommendation = 'SELL'
+                    break
+            
+            # 檢查強烈買入（如果還沒確定是賣出）
+            if recommendation == 'HOLD':
+                for pattern in strong_buy_patterns:
+                    if re.search(pattern, text, re.IGNORECASE):
+                        recommendation = 'BUY'
+                        break
+            
+            # 最後回到基本的關鍵詞檢查
+            if recommendation == 'HOLD':
+                if 'BUY' in text_upper or '買入' in text:
+                    recommendation = 'BUY'
+                elif 'SELL' in text_upper or '賣出' in text:
+                    recommendation = 'SELL'
+                else:
+                    recommendation = 'HOLD'
         
         # 提取風險等級
-        if 'HIGH' in text_upper or '高風險' in text:
-            risk_level = 'HIGH'
-        elif 'LOW' in text_upper or '低風險' in text:
-            risk_level = 'LOW'
-        else:
-            risk_level = 'MEDIUM'
+        risk_level = 'MEDIUM'
+        high_risk_patterns = [
+            r'極高.*?風險',
+            r'VERY.*?HIGH',
+            r'災難.*?級別',
+            r'嚴重.*?缺陷',
+            r'重大.*?財務.*?缺陷'
+        ]
+        
+        for pattern in high_risk_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                risk_level = 'VERY HIGH'
+                break
+        
+        if risk_level == 'MEDIUM':
+            if 'HIGH' in text_upper or '高風險' in text:
+                risk_level = 'HIGH'
+            elif 'LOW' in text_upper or '低風險' in text:
+                risk_level = 'LOW'
         
         # 提取信心度
         confidence = 5  # 預設值
         confidence_patterns = [
-            r'信心程度?[：:]\s*(\d+)/?\d*',
-            r'信心[：:]\s*(\d+)/?\d*',
-            r'信心度[：:]\s*(\d+)/?\d*',
-            r'confidence[：:]\s*(\d+)/?\d*'
+            r'信心程度?[：:]\s*(\d+)(?:/10|分)?',
+            r'信心[：:]\s*(\d+)(?:/10|分)?',
+            r'信心度[：:]\s*(\d+)(?:/10|分)?',
+            r'confidence[：:]\s*(\d+)(?:/10)?',
+            r'我的信心度[：:]?\s*(\d+)',
+            r'給出信心度[：:]?\s*(\d+)',
+            r'信心水平[：:]?\s*(\d+)',
+            r'信心度.*?提升.*?至.*?(\d+)',
+            r'信心度.*?(\d+).*?分'
         ]
         
         for pattern in confidence_patterns:
@@ -1947,6 +2037,28 @@ class ValueInvestmentAgent:
                     break
                 except ValueError:
                     continue
+        
+        # 如果沒有找到明確的信心度數字，嘗試從文本推斷
+        if confidence == 5:  # 仍是預設值
+            confidence_keywords = {
+                ('非常確定', '極度確信', '絕對看好', '強烈推薦', '信心度提升至', '9/10'): 9,
+                ('很確定', '高度確信', '強烈看好', '非常推薦', '8/10'): 8,
+                ('確定', '相當確信', '看好', '推薦', '7/10'): 7,
+                ('較為確定', '比較確信', '傾向看好', '6/10'): 6,
+                ('一般確定', '基本確信', '中性偏好', '5/10'): 5,
+                ('不太確定', '有些疑慮', '謹慎看待', '4/10'): 4,
+                ('很不確定', '較多疑慮', '謹慎', '3/10'): 3,
+                ('非常不確定', '很多疑慮', '高度謹慎', '2/10'): 2,
+                ('極度不確定', '嚴重疑慮', '極度謹慎', '1/10'): 1
+            }
+            
+            for keywords, score in confidence_keywords.items():
+                if any(keyword in text for keyword in keywords):
+                    confidence = score
+                    break
+        
+        # 記錄信心度解析結果
+        logging.debug(f"從分析文本中解析出信心度: {confidence}, 建議: {recommendation}, 風險等級: {risk_level}")
         
         return {
             'analysis': text,
@@ -2385,15 +2497,24 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         return base_analysis
     
     def conduct_multi_agent_debate(self, stock_data: Dict, rounds: int = None) -> Dict[str, Any]:
-        """進行多代理人辯論分析"""
+        """進行多代理人辯論分析，確保所有分析師信心度不低於設定要求"""
         if rounds is None:
             rounds = MULTI_AGENT_SETTINGS.get('debate_rounds', 2)
+        
+        # 從設定檔讀取信心度相關參數
+        MIN_CONFIDENCE = MULTI_AGENT_SETTINGS.get('min_confidence', 5)
+        MAX_ROUNDS = MULTI_AGENT_SETTINGS.get('max_confidence_rounds', 10)
+        ENABLE_CONFIDENCE_GUARANTEE = MULTI_AGENT_SETTINGS.get('enable_confidence_guarantee', True)
         
         stock_symbol = stock_data.get('symbol', 'Unknown')
         
         # 添加調試信息
         logging.info(f"開始多代理人辯論分析，代理人數量: {len(self.agents)}")
         logging.info(f"選擇的代理人: {self.selected_agents}")
+        if ENABLE_CONFIDENCE_GUARANTEE:
+            logging.info(f"信心度保證機制已啟用，最低要求: {MIN_CONFIDENCE}分，最大輪數: {MAX_ROUNDS}")
+        else:
+            logging.info("信心度保證機制已停用")
         
         debate_result = {
             'symbol': stock_data.get('symbol'),
@@ -2403,6 +2524,10 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
             'final_consensus': {},
             'voting_results': {},
             'debate_summary': "",
+            'confidence_improvement_log': [],  # 信心度改善記錄
+            'low_confidence_agents': [],  # 低信心度分析師記錄
+            'confidence_guarantee_enabled': ENABLE_CONFIDENCE_GUARANTEE,  # 記錄是否啟用保證機制
+            'min_confidence_required': MIN_CONFIDENCE,  # 記錄最低信心度要求
             'timestamp': datetime.now().isoformat()
         }
         
@@ -2416,24 +2541,39 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
         
         logging.info(f"並發分析完成，耗時: {end_time - start_time:.2f} 秒")
         
-        # 處理並發分析結果
+        # 處理並發分析結果並檢查信心度
+        low_confidence_agents = []
+        
         for agent_name, analysis_result in concurrent_results.items():
             try:
+                confidence = analysis_result.get('confidence', 5)
+                
+                # 檢查信心度是否低於最低要求
+                if confidence < MIN_CONFIDENCE:
+                    low_confidence_agents.append({
+                        'agent_name': agent_name,
+                        'confidence': confidence,
+                        'recommendation': analysis_result.get('recommendation', 'HOLD'),
+                        'reasoning': analysis_result.get('analysis', '')
+                    })
+                    logging.warning(f"⚠️ {agent_name} 信心度為 {confidence}，低於最低要求 {MIN_CONFIDENCE}")
+                
                 # 保存更詳細的初始分析和最終分析位置
                 debate_result['agents_analysis'][agent_name] = {
                     'initial_recommendation': analysis_result.get('recommendation', 'HOLD'),
-                    'initial_confidence': analysis_result.get('confidence', 5),
+                    'initial_confidence': confidence,
                     'initial_reasoning': analysis_result.get('analysis', ''),
                     'initial_risk_level': analysis_result.get('risk_level', 'MEDIUM'),
                     'initial_target_price_low': analysis_result.get('target_price_low'),
                     'initial_target_price_high': analysis_result.get('target_price_high'),
                     'recommendation': analysis_result.get('recommendation', 'HOLD'),  # 會在辯論後更新
-                    'confidence': analysis_result.get('confidence', 5),  # 會在辯論後更新
+                    'confidence': confidence,  # 會在辯論後更新
                     'reasoning': analysis_result.get('analysis', ''),  # 會在辯論後更新
                     'risk_level': analysis_result.get('risk_level', 'MEDIUM'),  # 會在辯論後更新
                     'target_price_low': analysis_result.get('target_price_low'),  # 會在辯論後更新
                     'target_price_high': analysis_result.get('target_price_high'),  # 會在辯論後更新
                     'position_change_reason': '',  # 辯論後如有變化會填入
+                    'confidence_history': [confidence],  # 新增：追蹤信心度變化歷史
                     
                     # 保存專家特有的專業分析欄位
                     'rebuttal_points': analysis_result.get('rebuttal_points', []),
@@ -2501,31 +2641,172 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                     'reasoning': f'結果處理失敗: {e}',
                     'risk_level': 'UNKNOWN',
                     'position_change_reason': '',
+                    'confidence_history': [0],
                     'rebuttal_points': [],
                     'support_points': [],
                     'key_points': []
                 }
+                low_confidence_agents.append({
+                    'agent_name': agent_name,
+                    'confidence': 0,
+                    'recommendation': 'HOLD',
+                    'reasoning': f'結果處理失敗: {e}'
+                })
+        
+        # 記錄初始低信心度分析師
+        debate_result['low_confidence_agents'] = low_confidence_agents.copy()
         
         # 進行辯論輪次
         context = self._build_context_from_analyses(debate_result['agents_analysis'])
+        current_round = 0
         
-        for round_num in range(1, rounds + 1):
-            logging.info(f"第{round_num + 1}輪：辯論與反駁")
+        # 決定是否需要進行信心度保證檢查
+        need_confidence_check = ENABLE_CONFIDENCE_GUARANTEE and len(low_confidence_agents) > 0
+        need_standard_debate = current_round < rounds
+        
+        # 如果啟用信心度保證且有低信心度分析師，或需要進行標準辯論輪次
+        while (need_confidence_check or need_standard_debate) and current_round < MAX_ROUNDS:
+            current_round += 1
             
-            round_result = self._conduct_debate_round(stock_data, context, round_num)
+            if ENABLE_CONFIDENCE_GUARANTEE and len(low_confidence_agents) > 0:
+                logging.info(f"第{current_round}輪：針對 {len(low_confidence_agents)} 位低信心度分析師進行強化討論")
+                # 特別針對低信心度分析師進行討論
+                round_result = self._conduct_confidence_improvement_round(
+                    stock_data, context, current_round, low_confidence_agents, MIN_CONFIDENCE
+                )
+            else:
+                logging.info(f"第{current_round}輪：標準辯論與反駁")
+                # 標準辯論輪次
+                round_result = self._conduct_debate_round(stock_data, context, current_round)
+            
             debate_result['debate_rounds'].append(round_result)
             context = self._update_context(context, round_result)
+            
+            # 如果啟用信心度保證，檢查是否還有低信心度分析師
+            if ENABLE_CONFIDENCE_GUARANTEE:
+                updated_low_confidence = []
+                confidence_improvements = []
+                
+                for agent_name, response in round_result.get('agent_responses', {}).items():
+                    new_confidence = response.get('confidence', 5)
+                    
+                    # 更新分析師的信心度歷史
+                    if agent_name in debate_result['agents_analysis']:
+                        debate_result['agents_analysis'][agent_name]['confidence_history'].append(new_confidence)
+                    
+                    # 檢查是否仍然是低信心度
+                    if new_confidence < MIN_CONFIDENCE:
+                        updated_low_confidence.append({
+                            'agent_name': agent_name,
+                            'confidence': new_confidence,
+                            'recommendation': response.get('recommendation', 'HOLD'),
+                            'reasoning': response.get('analysis', '')
+                        })
+                    else:
+                        # 記錄信心度改善
+                        old_confidence = next((agent['confidence'] for agent in low_confidence_agents 
+                                             if agent['agent_name'] == agent_name), 0)
+                        if old_confidence < MIN_CONFIDENCE:
+                            confidence_improvements.append({
+                                'agent_name': agent_name,
+                                'old_confidence': old_confidence,
+                                'new_confidence': new_confidence,
+                                'improvement': new_confidence - old_confidence,
+                                'round': current_round
+                            })
+                            logging.info(f"✅ {agent_name} 信心度從 {old_confidence} 提升至 {new_confidence}")
+                
+                # 記錄信心度改善
+                if confidence_improvements:
+                    debate_result['confidence_improvement_log'].extend(confidence_improvements)
+                
+                # 更新低信心度分析師列表
+                low_confidence_agents = updated_low_confidence
+                
+                # 更新檢查條件
+                need_confidence_check = len(low_confidence_agents) > 0
+            
+            # 更新標準辯論檢查條件
+            need_standard_debate = current_round < rounds and (not ENABLE_CONFIDENCE_GUARANTEE or len(low_confidence_agents) == 0)
+            
+            # 如果啟用信心度保證：所有分析師信心度都達標且已完成最低輪數，可以結束
+            # 如果未啟用信心度保證：完成標準輪數即可結束
+            can_end = False
+            if ENABLE_CONFIDENCE_GUARANTEE:
+                can_end = len(low_confidence_agents) == 0 and current_round >= rounds
+                if can_end:
+                    logging.info(f"✅ 所有分析師信心度已達到 {MIN_CONFIDENCE} 分以上，辯論結束")
+            else:
+                can_end = current_round >= rounds
+                if can_end:
+                    logging.info(f"✅ 完成 {rounds} 輪標準辯論，辯論結束")
+            
+            if can_end:
+                break
+            
+            # 防止無限循環的安全檢查
+            if current_round >= MAX_ROUNDS:
+                if ENABLE_CONFIDENCE_GUARANTEE and len(low_confidence_agents) > 0:
+                    logging.warning(f"⚠️ 達到最大輪數 {MAX_ROUNDS}，仍有 {len(low_confidence_agents)} 位分析師信心度低於 {MIN_CONFIDENCE}")
+                else:
+                    logging.info(f"✅ 達到最大輪數 {MAX_ROUNDS}，辯論結束")
+                break
         
-        # 更新每個agent的最終立場
+        # 最終信心度檢查和報告（僅在啟用保證機制時）
+        if ENABLE_CONFIDENCE_GUARANTEE:
+            final_low_confidence = []
+            for agent_name, agent_data in debate_result['agents_analysis'].items():
+                final_confidence = agent_data.get('confidence', 5)
+                if final_confidence < MIN_CONFIDENCE:
+                    final_low_confidence.append({
+                        'agent_name': agent_name,
+                        'final_confidence': final_confidence,
+                        'recommendation': agent_data.get('recommendation', 'HOLD')
+                    })
+            
+            if final_low_confidence:
+                logging.warning(f"⚠️ 仍有 {len(final_low_confidence)} 位分析師信心度低於 {MIN_CONFIDENCE}：{[agent['agent_name'] for agent in final_low_confidence]}")
+            else:
+                logging.info(f"✅ 所有分析師信心度均已達到 {MIN_CONFIDENCE} 分以上")
+        else:
+            logging.info("✅ 標準辯論流程完成（未啟用信心度保證機制）")
+        
+        # 更新每個agent的最終立場（彙總所有輪次的最新資料）
         if debate_result['debate_rounds']:
-            final_round = debate_result['debate_rounds'][-1]
-            for agent_name, final_response in final_round.get('agent_responses', {}).items():
+            # 找到每個分析師在所有輪次中的最後一次回應
+            final_agent_responses = {}
+            
+            # 從所有輪次中找到每個分析師的最後一次有效回應
+            for round_data in debate_result['debate_rounds']:
+                for agent_name, response in round_data.get('agent_responses', {}).items():
+                    if 'error' not in response:  # 只記錄成功的回應
+                        final_agent_responses[agent_name] = response
+            
+            # 更新每個分析師的最終資料
+            for agent_name, final_response in final_agent_responses.items():
                 if agent_name in debate_result['agents_analysis']:
                     agent_data = debate_result['agents_analysis'][agent_name]
                     
                     # 保存最終立場
                     initial_rec = agent_data.get('initial_recommendation', 'HOLD')
                     final_rec = final_response.get('recommendation', 'HOLD')
+                    
+                    # 檢查是否真的有立場變化（避免信心度改善輪次的誤判）
+                    actual_position_change = False
+                    if initial_rec != final_rec:
+                        # 進一步檢查：如果只是信心度改善但建議相同，不算立場變化
+                        confidence_improvement_only = True
+                        for round_data in debate_result['debate_rounds']:
+                            round_type = round_data.get('round_type', 'standard')
+                            if round_type != 'confidence_improvement':
+                                # 檢查標準辯論輪次中是否有立場變化
+                                if agent_name in round_data.get('agent_responses', {}):
+                                    round_rec = round_data['agent_responses'][agent_name].get('recommendation', initial_rec)
+                                    if round_rec != initial_rec:
+                                        confidence_improvement_only = False
+                                        break
+                        
+                        actual_position_change = not confidence_improvement_only
                     
                     agent_data['recommendation'] = final_rec
                     agent_data['confidence'] = final_response.get('confidence', 5)
@@ -2566,8 +2847,8 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                         agent_data['final_risk_quantification'] = final_response.get('risk_quantification', [])
                         agent_data['final_extreme_scenarios'] = final_response.get('extreme_scenarios', [])
                     
-                    # 分析立場變化原因
-                    if initial_rec != final_rec:
+                    # 只在真正有立場變化時分析原因
+                    if actual_position_change:
                         change_analysis = self._analyze_position_change(
                             agent_name, initial_rec, final_rec,
                             agent_data.get('initial_reasoning', ''),
@@ -2639,6 +2920,111 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
                 round_result['agent_responses'][agent_name] = response
             else:
                 logging.error(f"{agent_name} 第{round_num}輪辯論失敗: {response.get('error', 'Unknown error')}")
+        
+        return round_result
+    
+    def _conduct_confidence_improvement_round(self, stock_data: Dict, context: str, round_num: int, 
+                                            low_confidence_agents: List[Dict], min_confidence: int) -> Dict:
+        """
+        專門針對低信心度分析師進行強化討論輪次
+        
+        Args:
+            stock_data: 股票數據
+            context: 辯論背景
+            round_num: 輪次編號
+            low_confidence_agents: 低信心度分析師列表
+            min_confidence: 最低信心度要求
+            
+        Returns:
+            輪次結果字典
+        """
+        round_result = {
+            'round': round_num,
+            'round_type': 'confidence_improvement',
+            'target_agents': [agent['agent_name'] for agent in low_confidence_agents],
+            'min_confidence_required': min_confidence,
+            'timestamp': datetime.now().isoformat(),
+            'agent_responses': {}
+        }
+        
+        # 建立專門針對低信心度分析師的辯論背景
+        confidence_focus_context = f"""
+{context}
+
+=== 第{round_num}輪信心度強化討論 ===
+
+⚠️ 特別通知：以下分析師的信心度仍低於{min_confidence}分，需要進一步深入分析：
+
+"""
+        
+        for agent_info in low_confidence_agents:
+            confidence_focus_context += f"""
+🔍 【{agent_info['agent_name']}】
+   - 當前信心度: {agent_info['confidence']}/10 (需達到 {min_confidence}/10)
+   - 當前建議: {agent_info['recommendation']}
+   - 主要考量: {agent_info['reasoning'][:200]}...
+
+"""
+        
+        confidence_focus_context += f"""
+=== 信心度提升要求 ===
+
+請各位分析師特別注意：
+1. 🎯 **信心度要求**：每位分析師的最終信心度不得低於 {min_confidence} 分
+2. 🔍 **深度分析**：對於信心度不足的同事，請提供更多數據支持和邏輯論證
+3. 💡 **協助改善**：如果你對某個議題有更強的信心，請分享你的分析邏輯
+4. 🤝 **建設性討論**：針對不確定的地方進行更深入的探討
+5. 📊 **數據驅動**：提供更多具體的財務數據和市場證據
+
+特別是對於信心度低於 {min_confidence} 分的分析師，請：
+- 🔍 重新檢視你的分析邏輯
+- 📈 尋找更多支持你觀點的數據
+- 🤔 考慮其他專家提出的觀點
+- 💼 明確你的投資論述的關鍵假設
+- ⚖️ 如果仍有疑慮，請具體說明哪些因素讓你不夠確定
+
+目標：確保每位分析師都能達到 {min_confidence} 分以上的信心度，提供更可靠的投資建議。
+"""
+        
+        # 使用並發分析進行強化討論
+        start_time = time.time()
+        concurrent_responses = self._analyze_agents_concurrently(
+            stock_data, confidence_focus_context, "confidence_improvement"
+        )
+        end_time = time.time()
+        
+        logging.info(f"第{round_num}輪信心度強化討論並發執行完成，耗時: {end_time - start_time:.2f} 秒")
+        
+        # 整理並發結果並特別關注信心度變化
+        for agent_name, response in concurrent_responses.items():
+            if 'error' not in response:
+                new_confidence = response.get('confidence', 5)
+                old_confidence = next((agent['confidence'] for agent in low_confidence_agents 
+                                     if agent['agent_name'] == agent_name), 5)
+                
+                # 記錄信心度變化
+                response['confidence_change'] = new_confidence - old_confidence
+                response['confidence_target_met'] = new_confidence >= min_confidence
+                
+                # 如果信心度仍然不足，添加警告
+                if new_confidence < min_confidence:
+                    response['confidence_warning'] = f"信心度 {new_confidence} 仍低於要求的 {min_confidence}"
+                    logging.warning(f"⚠️ {agent_name} 經強化討論後信心度仍為 {new_confidence}，未達 {min_confidence} 要求")
+                else:
+                    logging.info(f"✅ {agent_name} 信心度從 {old_confidence} 提升至 {new_confidence}，已達要求")
+                
+                round_result['agent_responses'][agent_name] = response
+            else:
+                logging.error(f"{agent_name} 第{round_num}輪信心度強化討論失敗: {response.get('error', 'Unknown error')}")
+                # 為失敗的分析師設置基本回應
+                round_result['agent_responses'][agent_name] = {
+                    'recommendation': 'HOLD',
+                    'confidence': 0,
+                    'analysis': f"信心度強化討論失敗: {response.get('error', 'Unknown error')}",
+                    'confidence_change': 0,
+                    'confidence_target_met': False,
+                    'confidence_warning': f"討論失敗，信心度仍為0，未達 {min_confidence} 要求"
+                }
         
         return round_result
     
@@ -2826,17 +3212,68 @@ class EnhancedStockAnalyzerWithDebate(EnhancedStockAnalyzer):
             return 'HIGH'
     
     def _generate_debate_summary(self, debate_result: Dict) -> str:
-        """生成辯論摘要"""
+        """生成辯論摘要，包含信心度改善信息（如果啟用）"""
         summary_parts = []
         
         # 基本資訊
         symbol = debate_result['symbol']
         final_rec = debate_result['final_consensus']['final_recommendation']
         consensus_level = debate_result['final_consensus']['consensus_level']
+        confidence_guarantee_enabled = debate_result.get('confidence_guarantee_enabled', False)
+        min_confidence_required = debate_result.get('min_confidence_required', 5)
         
         summary_parts.append(f"股票 {symbol} 多代理人分析結果：")
         summary_parts.append(f"最終建議：{final_rec}")
         summary_parts.append(f"專家共識度：{consensus_level:.1%}")
+        
+        # 信心度相關統計（僅在啟用保證機制時顯示）
+        if confidence_guarantee_enabled:
+            confidence_improvements = debate_result.get('confidence_improvement_log', [])
+            low_confidence_agents = debate_result.get('low_confidence_agents', [])
+            
+            summary_parts.append(f"\n📊 信心度保證機制統計：")
+            summary_parts.append(f"最低信心度要求：{min_confidence_required}分")
+            
+            if low_confidence_agents:
+                summary_parts.append(f"初始低信心度分析師：{len(low_confidence_agents)} 位")
+                
+                if confidence_improvements:
+                    summary_parts.append(f"信心度改善成功：{len(confidence_improvements)} 位")
+                    summary_parts.append("改善詳情：")
+                    for improvement in confidence_improvements:
+                        agent_name = improvement['agent_name']
+                        old_conf = improvement['old_confidence']
+                        new_conf = improvement['new_confidence']
+                        round_num = improvement['round']
+                        summary_parts.append(f"  • {agent_name}: {old_conf} → {new_conf} (第{round_num}輪)")
+            else:
+                summary_parts.append("所有分析師初始信心度均達標")
+            
+            # 最終信心度檢查
+            final_confidence_issues = []
+            for agent_name, agent_data in debate_result.get('agents_analysis', {}).items():
+                final_confidence = agent_data.get('confidence', 5)
+                if final_confidence < min_confidence_required:
+                    final_confidence_issues.append(f"{agent_name} ({final_confidence}分)")
+            
+            if final_confidence_issues:
+                summary_parts.append(f"\n⚠️ 仍有信心度不足分析師：{', '.join(final_confidence_issues)}")
+            else:
+                summary_parts.append(f"\n✅ 所有分析師信心度均已達到{min_confidence_required}分以上要求")
+        
+        # 辯論輪次資訊
+        total_rounds = len(debate_result.get('debate_rounds', []))
+        
+        if confidence_guarantee_enabled:
+            confidence_rounds = len([r for r in debate_result.get('debate_rounds', []) 
+                                   if r.get('round_type') == 'confidence_improvement'])
+            
+            if confidence_rounds > 0:
+                summary_parts.append(f"\n🔄 辯論輪次：總計{total_rounds}輪（含{confidence_rounds}輪信心度強化討論）")
+            else:
+                summary_parts.append(f"\n🔄 辯論輪次：總計{total_rounds}輪（標準辯論流程）")
+        else:
+            summary_parts.append(f"\n🔄 辯論輪次：總計{total_rounds}輪（標準模式）")
         
         # 投票分佈
         vote_dist = debate_result['final_consensus']['vote_distribution']
