@@ -208,106 +208,208 @@ class MultiMarketDataFetcher:
                 failed_tickers.append(ticker)
                 continue
         
+        # 對於失敗的股票，嘗試重試一次（特別是針對臨時404錯誤）
         if failed_tickers:
-            logging.warning(f"以下 {len(failed_tickers)} 個股票獲取失敗: {failed_tickers}")
+            logging.info(f"嘗試重新獲取 {len(failed_tickers)} 個失敗的股票...")
+            retry_success = []
+            
+            for ticker in failed_tickers[:]:
+                try:
+                    self.rate_limiter.wait_if_needed()
+                    time.sleep(2)  # 額外延遲
+                    
+                    logging.info(f"重試獲取 {ticker}")
+                    stock_data = self._get_stock_data(ticker)
+                    
+                    if stock_data:
+                        all_data.append(stock_data)
+                        failed_tickers.remove(ticker)
+                        retry_success.append(ticker)
+                        
+                except Exception as e:
+                    logging.error(f"重試 {ticker} 仍然失敗: {e}")
+                    continue
+            
+            if retry_success:
+                logging.info(f"重試成功: {retry_success}")
+        
+        if failed_tickers:
+            logging.warning(f"最終仍有 {len(failed_tickers)} 個股票獲取失敗: {failed_tickers}")
         
         df = pd.DataFrame(all_data)
         logging.info(f"成功獲取 {len(df)} 個股票的數據")
         
         return df
     
+    def validate_ticker(self, ticker: str) -> bool:
+        """驗證股票代碼是否有效"""
+        try:
+            stock = yf.Ticker(ticker)
+            # 嘗試獲取基本資訊來驗證ticker
+            info = stock.info
+            
+            # 檢查是否有基本的公司資訊
+            if info and (info.get('longName') or info.get('shortName')):
+                return True
+            else:
+                return False
+                
+        except Exception as e:
+            logging.debug(f"驗證 {ticker} 時發生錯誤: {e}")
+            return False
+    
     def get_stock_data(self, ticker: str) -> Optional[Dict[str, Any]]:
-        """獲取單一股票的財務數據（公開方法）"""
+        """獲取單一股票的財務數據（公開方法，包含驗證）"""
+        # 先驗證ticker是否有效
+        if not self.validate_ticker(ticker):
+            logging.warning(f"{ticker}: 無效的股票代碼")
+            return None
+            
         self.rate_limiter.wait_if_needed()
         return self._get_stock_data(ticker)
     
     def _get_stock_data(self, ticker: str) -> Optional[Dict[str, Any]]:
         """獲取單一股票的財務數據"""
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            
-            if not info or info.get('regularMarketPrice') is None:
-                return None
-            
-            # 構建股票數據字典
-            # 優先使用 longName，然後 shortName，最後使用 ticker
-            company_name = (info.get('longName') or 
-                          info.get('shortName') or 
-                          ticker)
-            
-            stock_data = {
-                'symbol': ticker,
-                'ticker': ticker,  # 為了向後兼容
-                'name': company_name,
-                'company_name': company_name,  # 直接添加 company_name 欄位
-                'sector': info.get('sector', '未分類'),
-                'industry': info.get('industry', '未分類'),
-                'market_cap': info.get('marketCap'),
-                'current_price': info.get('regularMarketPrice'),
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                stock = yf.Ticker(ticker)
+                info = stock.info
                 
-                # 價值指標
-                'pe_ratio': info.get('trailingPE'),
-                'trailing_pe': info.get('trailingPE'),
-                'forward_pe': info.get('forwardPE'),
-                'pb_ratio': info.get('priceToBook'),
-                'price_to_book': info.get('priceToBook'),
-                'ps_ratio': info.get('priceToSalesTrailing12Months'),
-                'price_to_sales_trailing_12_months': info.get('priceToSalesTrailing12Months'),
-                'peg_ratio': info.get('pegRatio'),
-                'enterprise_to_revenue': info.get('enterpriseToRevenue'),
-                'enterprise_to_ebitda': info.get('enterpriseToEbitda'),
+                # 檢查是否成功獲取數據
+                if not info:
+                    if attempt < max_retries - 1:
+                        logging.warning(f"{ticker}: 嘗試 {attempt + 1}/{max_retries} - 無法獲取股票資訊，重試中...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        logging.warning(f"{ticker}: 無法獲取股票資訊")
+                        return None
                 
-                # 財務健全性指標
-                'debt_to_equity': info.get('debtToEquity'),
-                'current_ratio': info.get('currentRatio'),
-                'quick_ratio': info.get('quickRatio'),
-                'free_cash_flow': info.get('freeCashflow'),
-                'operating_cash_flow': info.get('operatingCashflow'),
-                'total_cash_per_share': info.get('totalCashPerShare'),
+                # 檢查關鍵字段是否存在
+                if info.get('regularMarketPrice') is None:
+                    if attempt < max_retries - 1:
+                        logging.warning(f"{ticker}: 嘗試 {attempt + 1}/{max_retries} - 股票價格數據不可用，重試中...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        logging.warning(f"{ticker}: 股票價格數據不可用")
+                        return None
                 
-                # 獲利能力指標
-                'roe': info.get('returnOnEquity'),
-                'return_on_equity': info.get('returnOnEquity'),
-                'roa': info.get('returnOnAssets'),
-                'return_on_assets': info.get('returnOnAssets'),
-                'profit_margin': info.get('profitMargins'),
-                'profit_margins': info.get('profitMargins'),
-                'operating_margins': info.get('operatingMargins'),
-                'gross_margins': info.get('grossMargins'),
-                'ebitda_margins': info.get('ebitdaMargins'),
+                # 檢查是否為有效的股票（有些ticker可能返回空數據）
+                if len(info) < 10:  # 基本資訊應該有至少10個字段
+                    if attempt < max_retries - 1:
+                        logging.warning(f"{ticker}: 嘗試 {attempt + 1}/{max_retries} - 股票數據不完整，重試中...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        logging.warning(f"{ticker}: 股票數據不完整")
+                        return None
                 
-                # 成長指標
-                'revenue_growth': info.get('revenueGrowth'),
-                'earnings_growth': info.get('earningsGrowth'),
-                'earnings_quarterly_growth': info.get('earningsQuarterlyGrowth'),
+                # 構建股票數據字典
+                # 優先使用 longName，然後 shortName，最後使用 ticker
+                company_name = (info.get('longName') or 
+                              info.get('shortName') or 
+                              ticker)
                 
-                # 股息指標
-                'dividend_yield': info.get('dividendYield'),
-                'dividend_rate': info.get('dividendRate'),
-                'payout_ratio': info.get('payoutRatio'),
+                stock_data = {
+                    'symbol': ticker,
+                    'ticker': ticker,  # 為了向後兼容
+                    'name': company_name,
+                    'company_name': company_name,  # 直接添加 company_name 欄位
+                    'sector': info.get('sector', '未分類'),
+                    'industry': info.get('industry', '未分類'),
+                    'market_cap': info.get('marketCap'),
+                    'current_price': info.get('regularMarketPrice'),
+                    
+                    # 價值指標
+                    'pe_ratio': info.get('trailingPE'),
+                    'trailing_pe': info.get('trailingPE'),
+                    'forward_pe': info.get('forwardPE'),
+                    'pb_ratio': info.get('priceToBook'),
+                    'price_to_book': info.get('priceToBook'),
+                    'ps_ratio': info.get('priceToSalesTrailing12Months'),
+                    'price_to_sales_trailing_12_months': info.get('priceToSalesTrailing12Months'),
+                    'peg_ratio': info.get('pegRatio'),
+                    'enterprise_to_revenue': info.get('enterpriseToRevenue'),
+                    'enterprise_to_ebitda': info.get('enterpriseToEbitda'),
+                    
+                    # 財務健全性指標
+                    'debt_to_equity': info.get('debtToEquity'),
+                    'current_ratio': info.get('currentRatio'),
+                    'quick_ratio': info.get('quickRatio'),
+                    'free_cash_flow': info.get('freeCashflow'),
+                    'operating_cash_flow': info.get('operatingCashflow'),
+                    'total_cash_per_share': info.get('totalCashPerShare'),
+                    
+                    # 獲利能力指標
+                    'roe': info.get('returnOnEquity'),
+                    'return_on_equity': info.get('returnOnEquity'),
+                    'roa': info.get('returnOnAssets'),
+                    'return_on_assets': info.get('returnOnAssets'),
+                    'profit_margin': info.get('profitMargins'),
+                    'profit_margins': info.get('profitMargins'),
+                    'operating_margins': info.get('operatingMargins'),
+                    'gross_margins': info.get('grossMargins'),
+                    'ebitda_margins': info.get('ebitdaMargins'),
+                    
+                    # 成長指標
+                    'revenue_growth': info.get('revenueGrowth'),
+                    'earnings_growth': info.get('earningsGrowth'),
+                    'earnings_quarterly_growth': info.get('earningsQuarterlyGrowth'),
+                    
+                    # 股息指標
+                    'dividend_yield': info.get('dividendYield'),
+                    'dividend_rate': info.get('dividendRate'),
+                    'payout_ratio': info.get('payoutRatio'),
+                    
+                    # 風險和市場指標
+                    'beta': info.get('beta'),
+                    'short_ratio': info.get('shortRatio'),
+                    'fifty_two_week_high': info.get('fiftyTwoWeekHigh'),
+                    'fifty_two_week_low': info.get('fiftyTwoWeekLow'),
+                    'recommendation': info.get('recommendationKey'),
+                    'target_price': info.get('targetMeanPrice'),
+                    
+                    # 其他財務指標
+                    'enterprise_value': info.get('enterpriseValue'),
+                    'ebitda': info.get('ebitda'),
+                    'book_value': info.get('bookValue'),
+                    'revenue_per_share': info.get('revenuePerShare'),
+                    'total_revenue': info.get('totalRevenue')
+                }
                 
-                # 風險和市場指標
-                'beta': info.get('beta'),
-                'short_ratio': info.get('shortRatio'),
-                'fifty_two_week_high': info.get('fiftyTwoWeekHigh'),
-                'fifty_two_week_low': info.get('fiftyTwoWeekLow'),
-                'recommendation': info.get('recommendationKey'),
-                'target_price': info.get('targetMeanPrice'),
+                return clean_financial_data(stock_data)
                 
-                # 其他財務指標
-                'enterprise_value': info.get('enterpriseValue'),
-                'ebitda': info.get('ebitda'),
-                'book_value': info.get('bookValue'),
-                'revenue_per_share': info.get('revenuePerShare'),
-                'total_revenue': info.get('totalRevenue')
-            }
-            
-            return clean_financial_data(stock_data)
-            
-        except Exception as e:
-            logging.error(f"獲取 {ticker} 數據失敗: {e}")
-            return None
+            except Exception as e:
+                error_msg = str(e)
+                
+                if attempt < max_retries - 1:
+                    if "404" in error_msg:
+                        logging.warning(f"{ticker}: 嘗試 {attempt + 1}/{max_retries} - Yahoo Finance 返回 404 錯誤，重試中...")
+                    elif "429" in error_msg or "rate limit" in error_msg.lower():
+                        logging.warning(f"{ticker}: 嘗試 {attempt + 1}/{max_retries} - 請求頻率過高，等待後重試...")
+                        time.sleep(retry_delay * 2)  # 更長的等待時間
+                    elif "network" in error_msg.lower() or "connection" in error_msg.lower():
+                        logging.warning(f"{ticker}: 嘗試 {attempt + 1}/{max_retries} - 網路連接錯誤，重試中...")
+                    else:
+                        logging.warning(f"{ticker}: 嘗試 {attempt + 1}/{max_retries} - 獲取數據失敗: {error_msg}，重試中...")
+                    
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    # 最後一次嘗試失敗
+                    if "404" in error_msg:
+                        logging.error(f"{ticker}: Yahoo Finance 返回 404 錯誤 - 股票代碼可能無效或已下市")
+                    elif "429" in error_msg or "rate limit" in error_msg.lower():
+                        logging.error(f"{ticker}: 請求頻率過高，請稍後重試")
+                    elif "network" in error_msg.lower() or "connection" in error_msg.lower():
+                        logging.error(f"{ticker}: 網路連接錯誤")
+                    else:
+                        logging.error(f"{ticker}: 獲取數據失敗: {error_msg}")
+                    return None
 
 
 class SP500DataFetcher:

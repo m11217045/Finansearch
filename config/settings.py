@@ -27,13 +27,19 @@ GEMINI_SETTINGS = {
 # 多代理人辯論系統設定
 MULTI_AGENT_SETTINGS = {
     'use_openai': False,          # 是否使用 OpenAI API (備選 Gemini)
-    'debate_rounds': 2,           # 辯論輪數
+    'debate_rounds': 2,           # 標準辯論輪數
     'max_agents': 5,              # 最大代理人數量
     'consensus_threshold': 0.7,   # 共識閾值
     'debate_timeout': 300,        # 辯論超時時間（秒）
     'enable_debate': True,        # 是否啟用多代理人辯論
     'max_concurrent_analysis': 5, # 最大並發分析數（Agent 並發）
     'enable_concurrent': True,    # 是否啟用並發分析
+    
+    # 信心度保證機制設定
+    'min_confidence': 5,          # 最低信心度要求 (1-10分制)
+    'max_confidence_rounds': 10,  # 信心度改善最大輪數 (防止無限循環)
+    'enable_confidence_guarantee': True,  # 是否啟用信心度保證機制
+    'confidence_improvement_required': True,  # 是否強制要求信心度改善
 }
 
 # 新聞和情緒分析設定

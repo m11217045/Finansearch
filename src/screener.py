@@ -1,15 +1,249 @@
 """
 股票篩選模組 - 根據價值投資標準篩選股票
-包含增強的價值投資指標分析和個股綜合分析
+包含增強的價值投資指標分析和個股綜合分析，以及技術面指標計算
 """
 
 import pandas as pd
 import numpy as np
 import logging
+import yfinance as yf
 from typing import Dict, List, Tuple, Any
+from datetime import datetime, timedelta
 from src.utils import format_currency, format_percentage, format_ratio, DateTimeEncoder
 from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
 from src.stock_individual_analyzer import StockIndividualAnalyzer
+
+
+class TechnicalIndicators:
+    """技術指標計算器 - 計算多種技術面指標"""
+    
+    def __init__(self):
+        self.periods = {
+            '1w': 5,    # 1週 = 5個交易日
+            '4w': 20,   # 4週 = 20個交易日
+            '12w': 60,  # 12週 = 60個交易日  
+            '24w': 120, # 24週 = 120個交易日
+            '48w': 240  # 48週 = 240個交易日
+        }
+    
+    def get_historical_data(self, ticker: str, period: str = "1y") -> pd.DataFrame:
+        """
+        獲取股票歷史價格數據
+        
+        Args:
+            ticker: 股票代號
+            period: 時間週期 ("1y", "2y", "5y" 等)
+            
+        Returns:
+            包含OHLCV數據的DataFrame
+        """
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period=period)
+            
+            if hist.empty:
+                logging.warning(f"無法獲取 {ticker} 的歷史數據")
+                return pd.DataFrame()
+                
+            return hist
+            
+        except Exception as e:
+            logging.error(f"獲取 {ticker} 歷史數據失敗: {e}")
+            return pd.DataFrame()
+    
+    def calculate_moving_averages(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """
+        計算各週期的移動平均線
+        
+        Args:
+            data: 包含Close價格的歷史數據
+            
+        Returns:
+            各週期的簡單移動平均和指數移動平均
+        """
+        if data.empty or 'Close' not in data.columns:
+            return {}
+            
+        ma_data = {}
+        close_prices = data['Close']
+        
+        for period_name, days in self.periods.items():
+            if len(close_prices) >= days:
+                # 簡單移動平均 (SMA)
+                sma = close_prices.rolling(window=days).mean().iloc[-1]
+                
+                # 指數移動平均 (EMA)  
+                ema = close_prices.ewm(span=days).mean().iloc[-1]
+                
+                ma_data[period_name] = {
+                    'sma': round(sma, 2) if not pd.isna(sma) else None,
+                    'ema': round(ema, 2) if not pd.isna(ema) else None
+                }
+            else:
+                ma_data[period_name] = {'sma': None, 'ema': None}
+                
+        return ma_data
+    
+    def calculate_high_low_points(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """
+        計算各週期的高點和低點
+        
+        Args:
+            data: 包含High和Low價格的歷史數據
+            
+        Returns:
+            各週期的最高點和最低點
+        """
+        if data.empty or 'High' not in data.columns or 'Low' not in data.columns:
+            return {}
+            
+        hl_data = {}
+        
+        for period_name, days in self.periods.items():
+            if len(data) >= days:
+                # 取最近N個交易日的數據
+                recent_data = data.tail(days)
+                
+                highest = recent_data['High'].max()
+                lowest = recent_data['Low'].min()
+                
+                hl_data[period_name] = {
+                    'high': round(highest, 2) if not pd.isna(highest) else None,
+                    'low': round(lowest, 2) if not pd.isna(lowest) else None
+                }
+            else:
+                hl_data[period_name] = {'high': None, 'low': None}
+                
+        return hl_data
+    
+    def calculate_price_position(self, data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """
+        計算當前價格在各週期高低點之間的位置（百分比）
+        
+        Args:
+            data: 包含價格數據的歷史數據
+            
+        Returns:
+            當前價格在高低點間的位置百分比
+        """
+        if data.empty:
+            return {}
+            
+        current_price = data['Close'].iloc[-1]
+        hl_data = self.calculate_high_low_points(data)
+        position_data = {}
+        
+        for period_name, hl in hl_data.items():
+            if hl['high'] is not None and hl['low'] is not None:
+                # 計算價格位置百分比 = (當前價格 - 最低點) / (最高點 - 最低點) * 100
+                if hl['high'] != hl['low']:
+                    position_pct = ((current_price - hl['low']) / (hl['high'] - hl['low'])) * 100
+                    position_data[period_name] = {
+                        'position_pct': round(position_pct, 1),
+                        'current_price': round(current_price, 2)
+                    }
+                else:
+                    position_data[period_name] = {
+                        'position_pct': 50.0,  # 如果高低點相同，設為50%
+                        'current_price': round(current_price, 2)
+                    }
+            else:
+                position_data[period_name] = {
+                    'position_pct': None,
+                    'current_price': round(current_price, 2)
+                }
+                
+        return position_data
+    
+    def calculate_comprehensive_technical_analysis(self, ticker: str) -> Dict[str, Any]:
+        """
+        計算股票的完整技術面分析
+        
+        Args:
+            ticker: 股票代號
+            
+        Returns:
+            包含所有技術指標的綜合分析結果
+        """
+        # 獲取歷史數據（需要足夠的數據來計算48週指標）
+        hist_data = self.get_historical_data(ticker, period="2y")
+        
+        if hist_data.empty:
+            return {'error': f'無法獲取 {ticker} 的歷史數據'}
+            
+        # 計算各項技術指標
+        ma_data = self.calculate_moving_averages(hist_data)
+        hl_data = self.calculate_high_low_points(hist_data)
+        position_data = self.calculate_price_position(hist_data)
+        
+        # 計算額外的技術指標
+        current_price = hist_data['Close'].iloc[-1]
+        volume_avg_20d = hist_data['Volume'].tail(20).mean()
+        
+        # 計算趨勢強度 (基於價格相對於移動平均線的位置)
+        trend_strength = self._calculate_trend_strength(hist_data, ma_data, current_price)
+        
+        # 計算波動性 (標準差)
+        volatility = self._calculate_volatility(hist_data)
+        
+        result = {
+            'ticker': ticker,
+            'current_price': round(current_price, 2),
+            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'moving_averages': ma_data,
+            'high_low_points': hl_data,
+            'price_positions': position_data,
+            'trend_strength': trend_strength,
+            'volatility': volatility,
+            'volume_avg_20d': round(volume_avg_20d, 0) if not pd.isna(volume_avg_20d) else None
+        }
+        
+        return result
+    
+    def _calculate_trend_strength(self, data: pd.DataFrame, ma_data: Dict, current_price: float) -> Dict[str, Any]:
+        """計算趨勢強度"""
+        trend_scores = {}
+        
+        for period_name in self.periods.keys():
+            if period_name in ma_data and ma_data[period_name]['sma'] is not None:
+                sma = ma_data[period_name]['sma']
+                # 計算價格相對於移動平均線的偏離度
+                deviation_pct = ((current_price - sma) / sma) * 100
+                
+                # 趨勢評分：正值表示上升趨勢，負值表示下降趨勢
+                if abs(deviation_pct) > 10:
+                    strength = "強"
+                elif abs(deviation_pct) > 5:
+                    strength = "中"
+                else:
+                    strength = "弱"
+                    
+                trend_scores[period_name] = {
+                    'deviation_pct': round(deviation_pct, 2),
+                    'direction': '上升' if deviation_pct > 0 else '下降',
+                    'strength': strength
+                }
+        
+        return trend_scores
+    
+    def _calculate_volatility(self, data: pd.DataFrame) -> Dict[str, float]:
+        """計算各週期的波動性（價格標準差）"""
+        volatility = {}
+        
+        for period_name, days in self.periods.items():
+            if len(data) >= days:
+                # 計算收益率
+                returns = data['Close'].tail(days).pct_change().dropna()
+                if len(returns) > 1:
+                    # 年化波動率
+                    vol = returns.std() * np.sqrt(252) * 100  # 252個交易日為一年
+                    volatility[period_name] = round(vol, 2)
+                else:
+                    volatility[period_name] = None
+            else:
+                volatility[period_name] = None
+                
+        return volatility
 
 
 class ValueScreener:
@@ -19,6 +253,200 @@ class ValueScreener:
         pass
         self.enhanced_analyzer = EnhancedStockAnalyzerWithDebate(enable_debate=False)
         self.individual_analyzer = StockIndividualAnalyzer()
+        self.technical_analyzer = TechnicalIndicators()
+    
+    def enhanced_analysis_with_technical(self, tickers: List[str], include_technical: bool = True) -> pd.DataFrame:
+        """
+        增強分析，包含技術面指標
+        
+        Args:
+            tickers: 股票代號列表
+            include_technical: 是否包含技術面分析
+            
+        Returns:
+            包含基本面和技術面指標的綜合分析結果
+        """
+        logging.info(f"開始對 {len(tickers)} 支股票進行增強分析（包含技術面）...")
+        
+        # 首先進行基本的增強分析
+        basic_results = self.enhanced_analysis(tickers, use_enhanced_metrics=True)
+        
+        if not include_technical or basic_results.empty:
+            return basic_results
+            
+        # 添加技術面分析
+        technical_results = []
+        
+        for ticker in tickers:
+            try:
+                logging.info(f"計算 {ticker} 的技術指標...")
+                tech_analysis = self.technical_analyzer.calculate_comprehensive_technical_analysis(ticker)
+                
+                if 'error' not in tech_analysis:
+                    # 提取關鍵技術指標用於評分
+                    tech_row = {
+                        'ticker': ticker,
+                        'current_price': tech_analysis.get('current_price'),
+                        'volume_avg_20d': tech_analysis.get('volume_avg_20d'),
+                    }
+                    
+                    # 添加移動平均線數據
+                    ma_data = tech_analysis.get('moving_averages', {})
+                    for period in ['1w', '4w', '12w', '24w', '48w']:
+                        if period in ma_data:
+                            tech_row[f'sma_{period}'] = ma_data[period].get('sma')
+                            tech_row[f'ema_{period}'] = ma_data[period].get('ema')
+                    
+                    # 添加高低點數據
+                    hl_data = tech_analysis.get('high_low_points', {})
+                    for period in ['1w', '4w', '12w', '24w', '48w']:
+                        if period in hl_data:
+                            tech_row[f'high_{period}'] = hl_data[period].get('high')
+                            tech_row[f'low_{period}'] = hl_data[period].get('low')
+                    
+                    # 添加價格位置數據
+                    pos_data = tech_analysis.get('price_positions', {})
+                    for period in ['1w', '4w', '12w', '24w', '48w']:
+                        if period in pos_data:
+                            tech_row[f'position_pct_{period}'] = pos_data[period].get('position_pct')
+                    
+                    # 添加趨勢強度和波動性
+                    trend_data = tech_analysis.get('trend_strength', {})
+                    for period in ['1w', '4w', '12w', '24w', '48w']:
+                        if period in trend_data:
+                            tech_row[f'trend_deviation_{period}'] = trend_data[period].get('deviation_pct')
+                            tech_row[f'trend_direction_{period}'] = trend_data[period].get('direction')
+                            tech_row[f'trend_strength_{period}'] = trend_data[period].get('strength')
+                    
+                    vol_data = tech_analysis.get('volatility', {})
+                    for period in ['1w', '4w', '12w', '24w', '48w']:
+                        if period in vol_data:
+                            tech_row[f'volatility_{period}'] = vol_data[period]
+                    
+                    technical_results.append(tech_row)
+                else:
+                    logging.warning(f"技術分析失敗: {ticker} - {tech_analysis.get('error')}")
+                    
+            except Exception as e:
+                logging.error(f"計算 {ticker} 技術指標時發生錯誤: {e}")
+                continue
+        
+        # 將技術分析結果轉換為DataFrame
+        if technical_results:
+            tech_df = pd.DataFrame(technical_results)
+            
+            # 合併基本面和技術面分析結果
+            if not basic_results.empty:
+                enhanced_results = pd.merge(basic_results, tech_df, on='ticker', how='left')
+            else:
+                enhanced_results = tech_df
+                
+            logging.info(f"完成 {len(enhanced_results)} 支股票的技術面分析")
+            return enhanced_results
+        else:
+            logging.warning("未能獲取任何技術面數據")
+            return basic_results
+    
+    def get_technical_analysis_summary(self, ticker: str) -> Dict[str, Any]:
+        """
+        獲取單一股票的技術面分析摘要
+        
+        Args:
+            ticker: 股票代號
+            
+        Returns:
+            技術面分析摘要
+        """
+        return self.technical_analyzer.calculate_comprehensive_technical_analysis(ticker)
+    
+    def calculate_technical_score(self, tech_data: Dict[str, Any]) -> float:
+        """
+        根據技術面數據計算技術評分
+        
+        Args:
+            tech_data: 技術面分析數據
+            
+        Returns:
+            技術評分 (0-100)
+        """
+        score = 50  # 基準分數
+        
+        try:
+            # 根據價格位置評分 (權重30%)
+            position_scores = []
+            pos_data = tech_data.get('price_positions', {})
+            
+            for period in ['4w', '12w', '24w']:  # 重點關注中長期
+                if period in pos_data and pos_data[period].get('position_pct') is not None:
+                    pos_pct = pos_data[period]['position_pct']
+                    # 價格在50%以上範圍較佳
+                    if pos_pct >= 70:
+                        position_scores.append(20)
+                    elif pos_pct >= 50:
+                        position_scores.append(10)
+                    elif pos_pct >= 30:
+                        position_scores.append(0)
+                    else:
+                        position_scores.append(-10)
+            
+            if position_scores:
+                score += sum(position_scores) / len(position_scores) * 0.3
+            
+            # 根據趨勢強度評分 (權重40%)
+            trend_scores = []
+            trend_data = tech_data.get('trend_strength', {})
+            
+            for period in ['4w', '12w', '24w']:
+                if period in trend_data:
+                    direction = trend_data[period].get('direction', '')
+                    strength = trend_data[period].get('strength', '')
+                    
+                    if direction == '上升':
+                        if strength == '強':
+                            trend_scores.append(20)
+                        elif strength == '中':
+                            trend_scores.append(10)
+                        else:
+                            trend_scores.append(5)
+                    elif direction == '下降':
+                        if strength == '強':
+                            trend_scores.append(-15)
+                        elif strength == '中':
+                            trend_scores.append(-8)
+                        else:
+                            trend_scores.append(-3)
+            
+            if trend_scores:
+                score += sum(trend_scores) / len(trend_scores) * 0.4
+            
+            # 根據波動性評分 (權重30%) - 波動性適中較佳
+            vol_data = tech_data.get('volatility', {})
+            vol_scores = []
+            
+            for period in ['12w', '24w']:
+                if period in vol_data and vol_data[period] is not None:
+                    vol = vol_data[period]
+                    # 波動性在10-30%之間較為理想
+                    if 15 <= vol <= 25:
+                        vol_scores.append(10)
+                    elif 10 <= vol <= 35:
+                        vol_scores.append(5)
+                    elif vol > 50:
+                        vol_scores.append(-10)
+                    else:
+                        vol_scores.append(0)
+            
+            if vol_scores:
+                score += sum(vol_scores) / len(vol_scores) * 0.3
+            
+            # 確保評分在0-100範圍內
+            score = max(0, min(100, score))
+            
+        except Exception as e:
+            logging.error(f"計算技術評分時發生錯誤: {e}")
+            score = 50  # 如果計算失敗，返回中性評分
+            
+        return round(score, 1)
     
     def enhanced_analysis(self, tickers: List[str], use_enhanced_metrics: bool = True) -> pd.DataFrame:
         """
@@ -1217,3 +1645,89 @@ class ValueScreener:
         sector_stats = sector_stats.sort_values('評分平均', ascending=False)
         
         return sector_stats
+
+
+def display_technical_analysis_summary(ticker: str) -> None:
+    """
+    顯示股票技術面分析摘要（便利函數）
+    
+    Args:
+        ticker: 股票代號
+    """
+    technical_analyzer = TechnicalIndicators()
+    analysis = technical_analyzer.calculate_comprehensive_technical_analysis(ticker)
+    
+    if 'error' in analysis:
+        print(f"❌ {ticker}: {analysis['error']}")
+        return
+    
+    print(f"\n📊 {ticker} 技術面分析摘要")
+    print(f"{'='*50}")
+    print(f"當前價格: ${analysis['current_price']}")
+    print(f"更新時間: {analysis['last_update']}")
+    print(f"20日平均成交量: {analysis.get('volume_avg_20d', 'N/A'):,.0f}" if analysis.get('volume_avg_20d') else "20日平均成交量: N/A")
+    
+    # 移動平均線
+    print(f"\n📈 移動平均線:")
+    ma_data = analysis.get('moving_averages', {})
+    for period, period_data in ma_data.items():
+        if period_data['sma'] is not None:
+            print(f"  {period:3s}: SMA ${period_data['sma']:7.2f} | EMA ${period_data['ema']:7.2f}")
+    
+    # 高低點
+    print(f"\n🎯 各週期高低點:")
+    hl_data = analysis.get('high_low_points', {})
+    pos_data = analysis.get('price_positions', {})
+    
+    for period in ['1w', '4w', '12w', '24w', '48w']:
+        if period in hl_data and hl_data[period]['high'] is not None:
+            high = hl_data[period]['high']
+            low = hl_data[period]['low']
+            pos_pct = pos_data.get(period, {}).get('position_pct', 0)
+            print(f"  {period:3s}: 高 ${high:7.2f} | 低 ${low:7.2f} | 位置 {pos_pct:5.1f}%")
+    
+    # 趨勢分析
+    print(f"\n📊 趨勢分析:")
+    trend_data = analysis.get('trend_strength', {})
+    for period, trend_info in trend_data.items():
+        direction = trend_info.get('direction', 'N/A')
+        strength = trend_info.get('strength', 'N/A')
+        deviation = trend_info.get('deviation_pct', 0)
+        emoji = "🟢" if direction == "上升" else "🔴" if direction == "下降" else "⚪"
+        print(f"  {period:3s}: {emoji} {direction} ({strength}) | 偏離 {deviation:+6.1f}%")
+    
+    # 波動性
+    print(f"\n📉 波動性 (年化):")
+    vol_data = analysis.get('volatility', {})
+    for period, vol in vol_data.items():
+        if vol is not None:
+            risk_level = "低" if vol < 20 else "中" if vol < 40 else "高"
+            print(f"  {period:3s}: {vol:5.1f}% ({risk_level})")
+    
+    print(f"{'='*50}")
+
+
+def batch_technical_analysis(tickers: List[str], export_csv: bool = False) -> pd.DataFrame:
+    """
+    批量技術面分析
+    
+    Args:
+        tickers: 股票代號列表
+        export_csv: 是否匯出CSV檔案
+        
+    Returns:
+        技術面分析結果DataFrame
+    """
+    screener = ValueScreener()
+    
+    print(f"\n🔍 開始批量技術面分析 ({len(tickers)} 支股票)...")
+    
+    results = screener.enhanced_analysis_with_technical(tickers, include_technical=True)
+    
+    if not results.empty and export_csv:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"data/output/technical_analysis_{timestamp}.csv"
+        results.to_csv(filename, index=False, encoding='utf-8-sig')
+        print(f"📁 技術面分析結果已匯出至: {filename}")
+    
+    return results
