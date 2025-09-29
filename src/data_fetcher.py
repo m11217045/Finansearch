@@ -145,6 +145,23 @@ STOCK_PORTFOLIOS = {
             '1326.TW', '2880.TW', '2887.TW', '2002.TW', '4938.TW',
             '2409.TW', '2347.TW', '1802.TW', '3231.TW', '2542.TW'
         ]
+    },
+    'nasdaq_top10': {
+        'name': '那斯達克權重前十',
+        'description': '那斯達克100指數權重前10大股票',
+        'source': 'predefined',
+        'tickers': [
+            'AAPL',   # Apple Inc. - 蘋果公司
+            'MSFT',   # Microsoft Corporation - 微軟公司
+            'AMZN',   # Amazon.com Inc. - 亞馬遜
+            'NVDA',   # NVIDIA Corporation - 輝達
+            'TSLA',   # Tesla Inc. - 特斯拉
+            'GOOGL',  # Alphabet Inc. Class A - 谷歌A股
+            'GOOG',   # Alphabet Inc. Class C - 谷歌C股
+            'META',   # Meta Platforms Inc. - Meta平台
+            'AVGO',   # Broadcom Inc. - 博通
+            'PEP'     # PepsiCo Inc. - 百事可樂
+        ]
     }
 }
 
@@ -410,6 +427,43 @@ class MultiMarketDataFetcher:
                     else:
                         logging.error(f"{ticker}: 獲取數據失敗: {error_msg}")
                     return None
+
+
+class NasdaqDataFetcher:
+    """那斯達克數據抓取器 - 專門用於那斯達克權重前十股票"""
+    
+    def __init__(self):
+        self.multi_fetcher = MultiMarketDataFetcher('nasdaq_top10')
+        self.tickers = []
+        self.financial_data = {}
+        self.rate_limiter = self.multi_fetcher.rate_limiter
+        
+    def get_nasdaq_top10_tickers(self) -> List[str]:
+        """獲取那斯達克權重前10股票列表"""
+        return self.multi_fetcher.get_tickers()
+    
+    def fetch_financial_data(self, max_stocks: Optional[int] = None) -> pd.DataFrame:
+        """獲取財務數據"""
+        return self.multi_fetcher.fetch_financial_data(max_stocks)
+    
+    def get_stock_info(self, ticker: str) -> Dict[str, Any]:
+        """獲取單一股票的詳細資訊"""
+        return self.multi_fetcher._get_stock_data(ticker)
+    
+    def batch_fetch_stock_data(self, tickers: Optional[List[str]] = None, 
+                              max_stocks: Optional[int] = None) -> pd.DataFrame:
+        """批量獲取股票數據"""
+        return self.fetch_financial_data(max_stocks)
+    
+    def save_tickers_to_csv(self, file_path: str) -> None:
+        """保存股票代碼到CSV檔案"""
+        tickers = self.get_nasdaq_top10_tickers()
+        tickers_df = pd.DataFrame({
+            'ticker': tickers,
+            'index': '那斯達克100',
+            'weight_rank': range(1, len(tickers) + 1)
+        })
+        tickers_df.to_csv(file_path, index=False, encoding='utf-8-sig')
 
 
 class SP500DataFetcher:

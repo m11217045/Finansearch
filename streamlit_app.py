@@ -1,5 +1,5 @@
 """
-Streamlit 網頁應用介面 - S&P 500 價值投資股票篩選系統
+Streamlit 網頁應用介面 - 那斯達克權重前十股票分析系統
 """
 
 import streamlit as st
@@ -15,7 +15,7 @@ import logging
 from typing import List
 
 # 導入自訂模組
-from src.data_fetcher import SP500DataFetcher, MultiMarketDataFetcher, STOCK_PORTFOLIOS
+from src.data_fetcher import SP500DataFetcher, NasdaqDataFetcher, MultiMarketDataFetcher, STOCK_PORTFOLIOS
 from src.screener import ValueScreener
 from src.enhanced_analyzer import EnhancedStockAnalyzerWithDebate
 from src.stock_individual_analyzer import StockIndividualAnalyzer
@@ -72,7 +72,7 @@ def get_available_agents() -> List[str]:
 
 # 設置頁面配置
 st.set_page_config(
-    page_title="多市場價值投資分析系統",
+    page_title="那斯達克權重前十股票分析系統",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -121,15 +121,16 @@ st.markdown("""
 def main():
     """主應用程式"""
     # 標題
-    st.markdown('<h1 class="main-header">📈 多市場價值投資分析系統</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📈 那斯達克權重前十股票分析系統</h1>', unsafe_allow_html=True)
     
     # 側邊欄 - 系統控制
     setup_sidebar()
     
     # 主要內容區域
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "🔍 股票篩選與AI分析", 
-        "💼 持股管理",
+        "� 那斯達克指數分析",
+        "�💼 持股管理",
         "📊 持股AI分析"
     ])
     
@@ -137,9 +138,12 @@ def main():
         combined_screening_ai_interface()
     
     with tab2:
+        nasdaq_index_analysis_interface()
+        
+    with tab3:
         portfolio_management_interface()
     
-    with tab3:
+    with tab4:
         portfolio_ai_analysis_interface()
 
 
@@ -147,19 +151,17 @@ def setup_sidebar():
     """設置側邊欄"""
     st.sidebar.markdown("## 📊 投資組合選擇")
     
-    # 投資組合選擇
+    # 投資組合選擇（固定為那斯達克權重前十）
     portfolio_options = {
-        'sp500': f"🇺🇸 {STOCK_PORTFOLIOS['sp500']['name']} - {STOCK_PORTFOLIOS['sp500']['description']}",
-        'faang_plus': f"💻 {STOCK_PORTFOLIOS['faang_plus']['name']} - {STOCK_PORTFOLIOS['faang_plus']['description']}",
-        'taiwan_top50': f"🇹🇼 {STOCK_PORTFOLIOS['taiwan_top50']['name']} - {STOCK_PORTFOLIOS['taiwan_top50']['description']}"
+        'nasdaq_top10': f"� {STOCK_PORTFOLIOS['nasdaq_top10']['name']} - {STOCK_PORTFOLIOS['nasdaq_top10']['description']}"
     }
     
     selected_portfolio = st.sidebar.selectbox(
-        "選擇投資組合",
+        "分析目標",
         options=list(portfolio_options.keys()),
         format_func=lambda x: portfolio_options[x],
         index=0,
-        help="選擇要分析的股票組合"
+        help="分析那斯達克100指數權重前10大股票"
     )
     
     # 將選擇的投資組合存儲到 session state
@@ -173,15 +175,13 @@ def setup_sidebar():
         ticker_count = len(portfolio_config['tickers'])
         st.sidebar.markdown(f"**📊 股票數量：** {ticker_count} 支")
         
-        # 顯示部分股票代碼作為預覽
-        if selected_portfolio == 'faang_plus':
-            st.sidebar.markdown("**💻 包含股票：**")
-            for ticker in portfolio_config['tickers']:
-                st.sidebar.markdown(f"• {ticker}")
-        elif selected_portfolio == 'taiwan_top50':
-            st.sidebar.markdown("**🏢 包含台灣前50大公司**")
+        # 顯示那斯達克權重前十股票
+        if selected_portfolio == 'nasdaq_top10':
+            st.sidebar.markdown("**� 包含股票：**")
+            for i, ticker in enumerate(portfolio_config['tickers'], 1):
+                st.sidebar.markdown(f"• 第{i}名: {ticker}")
     else:
-        st.sidebar.markdown("**📊 股票數量：** ~500 支")
+        st.sidebar.markdown("**📊 股票數量：** 10 支")
     
     st.sidebar.markdown("---")
     
@@ -1778,15 +1778,12 @@ def data_analysis_interface():
     if 'current_portfolio' in st.session_state:
         portfolio_type = st.session_state['current_portfolio']
         
-        if portfolio_type == 'faang_plus':
-            st.markdown("### 💻 科技巨頭分析")
-            st.markdown("專注於美國科技龍頭公司的價值分析，這些公司通常具有強大的護城河和成長潛力。")
-        elif portfolio_type == 'taiwan_top50':
-            st.markdown("### 🇹🇼 台股前50分析")
-            st.markdown("專注於台灣證券交易所市值前50大公司，包含半導體、金融、傳統產業等多元領域。")
-        else:  # sp500
-            st.markdown("### 🇺🇸 S&P 500分析")
-            st.markdown("美國最具代表性的500家大型企業，涵蓋各行各業的領導公司。")
+        if portfolio_type == 'nasdaq_top10':
+            st.markdown("### 📈 那斯達克權重前十分析")
+            st.markdown("專注於那斯達克100指數權重最高的前10大股票，這些公司代表了美國科技股的核心力量。")
+        else:
+            st.markdown("### 📈 股票分析")
+            st.markdown("股票組合分析結果。")
     
     # 視覺化圖表
     create_visualization_charts(df)
@@ -1794,6 +1791,104 @@ def data_analysis_interface():
     # 詳細數據表格
     st.markdown("### 📋 詳細數據")
     display_detailed_table(df)
+
+
+def nasdaq_index_analysis_interface():
+    """那斯達克指數分析介面"""
+    st.markdown('<h2 class="sub-header">📈 那斯達克指數投資建議</h2>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    ### 📊 指數分析說明
+    本功能基於那斯達克100指數ETF (QQQ) 的技術分析，提供買入、賣出或持有的投資建議。
+    
+    **分析指標包括：**
+    - 50日移動平均線
+    - 200日移動平均線
+    - 價格趨勢分析
+    - 短期技術信號
+    """)
+    
+    # 分析按鈕
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        if st.button("🔍 分析那斯達克指數", type="primary", use_container_width=True):
+            with st.spinner("正在分析那斯達克指數..."):
+                try:
+                    # 導入分析函數
+                    from main import analyze_nasdaq_index_recommendation
+                    
+                    # 執行分析
+                    result = analyze_nasdaq_index_recommendation()
+                    
+                    if result.get('error'):
+                        st.error(f"分析失敗：{result.get('reasoning', '未知錯誤')}")
+                    else:
+                        # 顯示分析結果
+                        st.success("✅ 分析完成！")
+                        
+                        # 投資建議
+                        recommendation = result.get('recommendation', '未知')
+                        if recommendation == '買入':
+                            st.success(f"### 🟢 投資建議：{recommendation}")
+                        elif recommendation == '賣出':
+                            st.error(f"### 🔴 投資建議：{recommendation}")
+                        else:
+                            st.warning(f"### 🟡 投資建議：{recommendation}")
+                        
+                        st.info(f"**建議理由：** {result.get('reasoning', '無資料')}")
+                        st.metric("技術分析評分", f"{result.get('score', 0)}/4")
+                        
+                        # 技術指標
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("當前價格", f"${result.get('current_price', 0):.2f}")
+                        with col2:
+                            st.metric("50日均線", f"${result.get('sma_50', 0):.2f}")
+                        with col3:
+                            st.metric("200日均線", f"${result.get('sma_200', 0):.2f}")
+                        
+                        # 價格變化
+                        st.markdown("### 📈 價格變化")
+                        price_changes = result.get('price_changes', {})
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            change_1m = price_changes.get('1_month', 0)
+                            color_1m = "normal" if change_1m >= 0 else "inverse"
+                            st.metric("近1個月", f"{change_1m:+.1f}%", delta_color=color_1m)
+                        with col2:
+                            change_3m = price_changes.get('3_month', 0)
+                            color_3m = "normal" if change_3m >= 0 else "inverse"
+                            st.metric("近3個月", f"{change_3m:+.1f}%", delta_color=color_3m)
+                        with col3:
+                            change_1y = price_changes.get('1_year', 0)
+                            color_1y = "normal" if change_1y >= 0 else "inverse"
+                            st.metric("近1年", f"{change_1y:+.1f}%", delta_color=color_1y)
+                        
+                        # 技術分析信號
+                        if 'signals' in result:
+                            st.markdown("### 🔍 技術分析信號")
+                            for signal in result['signals']:
+                                if "正面" in signal:
+                                    st.success(f"✅ {signal}")
+                                else:
+                                    st.error(f"❌ {signal}")
+                        
+                        # 保存結果到 session state
+                        st.session_state['nasdaq_analysis'] = result
+                        
+                except Exception as e:
+                    st.error(f"分析過程中發生錯誤：{str(e)}")
+    
+    # 顯示歷史分析結果（如果有的話）
+    if 'nasdaq_analysis' in st.session_state:
+        st.markdown("---")
+        st.markdown("### 📝 上次分析結果")
+        
+        with st.expander("查看詳細結果", expanded=False):
+            result = st.session_state['nasdaq_analysis']
+            st.json(result)
 
 
 def ai_analysis_interface():
@@ -1858,7 +1953,7 @@ def fetch_portfolio_data():
     """獲取選定投資組合的數據"""
     try:
         # 獲取選定的投資組合類型
-        selected_portfolio = st.session_state.get('selected_portfolio', 'sp500')
+        selected_portfolio = st.session_state.get('selected_portfolio', 'nasdaq_top10')
         
         # 檢查是否已經獲取過相同投資組合的數據
         if ('raw_data' in st.session_state and 
@@ -1889,10 +1984,10 @@ def fetch_portfolio_data():
         # 對於科技7巨頭，獲取所有股票
         if selected_portfolio == 'faang_plus':
             max_stocks_limit = None  # 獲取所有7支股票
-        elif selected_portfolio == 'taiwan_top50':
-            max_stocks_limit = 50  # 台股數量限制
-        else:  # sp500
-            max_stocks_limit = 500  # SP500預設數量
+        elif selected_portfolio == 'nasdaq_top10':
+            max_stocks_limit = 10  # 那斯達克前十數量限制
+        else:
+            max_stocks_limit = 10  # 預設數量
         
         raw_data = fetcher.fetch_financial_data(max_stocks_limit)
         
@@ -1921,10 +2016,10 @@ def fetch_portfolio_data():
         logging.error(f"投資組合數據獲取錯誤: {e}")
 
 
-def fetch_sp500_data():
-    """獲取 S&P 500 數據 - 向後兼容函數"""
-    # 設置為 SP500 並調用通用函數
-    st.session_state['selected_portfolio'] = 'sp500'
+def fetch_nasdaq_data():
+    """獲取那斯達克權重前十數據"""
+    # 設置為那斯達克權重前十並調用通用函數
+    st.session_state['selected_portfolio'] = 'nasdaq_top10'
     fetch_portfolio_data()
 
 
@@ -2532,7 +2627,7 @@ def generate_investment_report():
 **生成時間**: {timestamp}
 
 ## 📋 執行摘要
-本次分析從 S&P 500 指數成分股中，運用價值投資排名系統選出前 {len(df)} 支被低估股票。
+本次分析專注於那斯達克100指數權重前 {len(df)} 支股票，這些股票代表了美國科技股的核心力量。
 
 ## 🎯 評分標準 (適合複委託投資者)
 - **本益比 (P/E)**: 30%權重 - 越低越好
